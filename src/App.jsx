@@ -28,6 +28,10 @@ const COUNTRY_COLORS = [
 const DEFAULT_MIN_EUR = 0;
 const DEFAULT_MAX_EUR = 150000;
 const DEFAULT_X_TICK_STEP = 25000;
+const X_AXIS_TARGET_TICKS = 6.5;
+const X_AXIS_MIN_TICKS = 5;
+const X_AXIS_MAX_TICKS = 8;
+const X_AXIS_STEP_MULTIPLIERS = [2.5, 5, 10];
 const PAY_PERIOD_OPTIONS = [
   { id: 'annual', label: 'Annually', periodsPerYear: 1 },
   { id: 'monthly', label: 'Monthly', periodsPerYear: 12 },
@@ -134,6 +138,41 @@ function createCurrencyLabelFormatter(currencyCode) {
     });
     return (value) => `${currencyCode} ${fallback.format(value)}`;
   }
+}
+
+function createCompactNumberLabelFormatter() {
+  const integerFormatter = new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 0,
+  });
+  const compactThresholds = [
+    { threshold: 1e12, suffix: 'T' },
+    { threshold: 1e9, suffix: 'B' },
+    { threshold: 1e6, suffix: 'M' },
+    { threshold: 1e3, suffix: 'K' },
+  ];
+
+  return (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return '';
+    }
+
+    const absolute = Math.abs(numeric);
+    const sign = numeric < 0 ? '-' : '';
+    for (const { threshold, suffix } of compactThresholds) {
+      if (absolute >= threshold) {
+        const scaled = absolute / threshold;
+        const rounded =
+          scaled >= 100 ? Math.round(scaled) : Math.round(scaled * 10) / 10;
+        const compact = Number.isInteger(rounded)
+          ? String(rounded)
+          : rounded.toFixed(1).replace(/\.0$/, '');
+        return `${sign}${compact}${suffix}`;
+      }
+    }
+
+    return `${sign}${integerFormatter.format(absolute)}`;
+  };
 }
 
 const TAX_INTERPRETER = new TaxSpecInterpreter(taxSpecification);
@@ -499,27 +538,47 @@ function chooseXAxisStep(range) {
     return DEFAULT_X_TICK_STEP;
   }
 
-  if (range > 500000) {
-    return 100000;
+  const desiredStep = range / X_AXIS_TARGET_TICKS;
+  const baseExponent = Math.floor(Math.log10(desiredStep));
+  const stepCandidates = [];
+
+  for (let exponent = baseExponent - 2; exponent <= baseExponent + 2; exponent += 1) {
+    const magnitude = 10 ** exponent;
+    for (const multiplier of X_AXIS_STEP_MULTIPLIERS) {
+      const step = multiplier * magnitude;
+      if (Number.isFinite(step) && step > 0) {
+        stepCandidates.push(step);
+      }
+    }
   }
 
-  if (range > 300000) {
-    return 50000;
+  const uniqueCandidates = [...new Set(stepCandidates)].sort((left, right) => left - right);
+  if (uniqueCandidates.length === 0) {
+    return DEFAULT_X_TICK_STEP;
   }
 
-  if (range < 20000) {
-    return 2500;
-  }
+  const ratedCandidates = uniqueCandidates.map((step) => ({
+    step,
+    ticks: range / step,
+  }));
+  const candidatesWithinTickBand = ratedCandidates.filter(
+    ({ ticks }) => ticks >= X_AXIS_MIN_TICKS && ticks <= X_AXIS_MAX_TICKS
+  );
+  const candidates = candidatesWithinTickBand.length > 0
+    ? candidatesWithinTickBand
+    : ratedCandidates;
 
-  if (range < 50000) {
-    return 5000;
-  }
+  candidates.sort((left, right) => {
+    const leftDelta = Math.abs(left.ticks - X_AXIS_TARGET_TICKS);
+    const rightDelta = Math.abs(right.ticks - X_AXIS_TARGET_TICKS);
+    if (leftDelta !== rightDelta) {
+      return leftDelta - rightDelta;
+    }
 
-  if (range < 100000) {
-    return 10000;
-  }
+    return right.step - left.step;
+  });
 
-  return DEFAULT_X_TICK_STEP;
+  return candidates[0].step;
 }
 
 function clampInputAtZero(value, fallback) {
@@ -529,6 +588,15 @@ function clampInputAtZero(value, fallback) {
   }
 
   return String(Math.max(0, parsed));
+}
+
+function alignDisplayIncomeToInteger(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return NaN;
+  }
+
+  return Math.round(parsed);
 }
 
 function App() {
@@ -728,51 +796,116 @@ function App() {
             }
           }
 
+          const marginalRateByIncome = new Map();
+          const cumulativeTaxPaidByIncome = new Map();
+          const cumulativeRateByIncome = new Map();
+          const netPayByIncome = new Map();
+
+          const getCachedValue = (cacheByIncome, displayIncome, evaluate) => {
+            if (cacheByIncome.has(displayIncome)) {
+              return cacheByIncome.get(displayIncome);
+            }
+
+            const value = evaluate(displayIncome);
+            const normalizedValue =
+              value === undefined || value === null || Number.isFinite(value)
+                ? value
+                : undefined;
+            cacheByIncome.set(displayIncome, normalizedValue);
+            return normalizedValue;
+          };
+
           const marginalRateAtDisplayIncome = (grossIncomeDisplayCurrency) => {
-            if (grossIncomeDisplayCurrency < 0 || !preparedEvaluator) {
+            const alignedIncomeDisplayCurrency =
+              alignDisplayIncomeToInteger(grossIncomeDisplayCurrency);
+            if (
+              !Number.isFinite(alignedIncomeDisplayCurrency) ||
+              alignedIncomeDisplayCurrency < 0 ||
+              !preparedEvaluator
+            ) {
               return undefined;
             }
 
-            const grossIncomeAnnualDisplayCurrency = grossIncomeDisplayCurrency * periodsPerYear;
-            const marginalRate = preparedEvaluator.marginalRate(grossIncomeAnnualDisplayCurrency);
-            return Number.isFinite(marginalRate) ? marginalRate * RATE_PERCENT_SCALE : 0;
+            return getCachedValue(
+              marginalRateByIncome,
+              alignedIncomeDisplayCurrency,
+              (displayIncome) => {
+                const grossIncomeAnnualDisplayCurrency = displayIncome * periodsPerYear;
+                const marginalRate = preparedEvaluator.marginalRate(grossIncomeAnnualDisplayCurrency);
+                return Number.isFinite(marginalRate) ? marginalRate * RATE_PERCENT_SCALE : 0;
+              }
+            );
           };
 
           const cumulativeTaxPaidAtDisplayIncome = (grossIncomeDisplayCurrency) => {
-            if (grossIncomeDisplayCurrency < 0 || !preparedEvaluator) {
+            const alignedIncomeDisplayCurrency =
+              alignDisplayIncomeToInteger(grossIncomeDisplayCurrency);
+            if (
+              !Number.isFinite(alignedIncomeDisplayCurrency) ||
+              alignedIncomeDisplayCurrency < 0 ||
+              !preparedEvaluator
+            ) {
               return undefined;
             }
 
-            const grossIncomeAnnualDisplayCurrency = grossIncomeDisplayCurrency * periodsPerYear;
-            const overallRate = preparedEvaluator.overallRate(grossIncomeAnnualDisplayCurrency);
-            if (!Number.isFinite(overallRate)) {
-              return undefined;
-            }
+            return getCachedValue(
+              cumulativeTaxPaidByIncome,
+              alignedIncomeDisplayCurrency,
+              (displayIncome) => {
+                const grossIncomeAnnualDisplayCurrency = displayIncome * periodsPerYear;
+                const overallRate = preparedEvaluator.overallRate(grossIncomeAnnualDisplayCurrency);
+                if (!Number.isFinite(overallRate)) {
+                  return undefined;
+                }
 
-            return (overallRate * grossIncomeAnnualDisplayCurrency) / periodsPerYear;
+                return (overallRate * grossIncomeAnnualDisplayCurrency) / periodsPerYear;
+              }
+            );
           };
 
           const netPayAtDisplayIncome = (grossIncomeDisplayCurrency) => {
-            if (grossIncomeDisplayCurrency < 0) {
+            const alignedIncomeDisplayCurrency =
+              alignDisplayIncomeToInteger(grossIncomeDisplayCurrency);
+            if (!Number.isFinite(alignedIncomeDisplayCurrency) || alignedIncomeDisplayCurrency < 0) {
               return undefined;
             }
 
-            return grossIncomeDisplayCurrency - cumulativeTaxPaidAtDisplayIncome(grossIncomeDisplayCurrency);
+            return getCachedValue(
+              netPayByIncome,
+              alignedIncomeDisplayCurrency,
+              (displayIncome) => {
+                const taxPaid = cumulativeTaxPaidAtDisplayIncome(displayIncome);
+                if (!Number.isFinite(taxPaid)) {
+                  return undefined;
+                }
+
+                return displayIncome - taxPaid;
+              }
+            );
           };
 
           const cumulativeRateAtDisplayIncome = (grossIncomeDisplayCurrency) => {
-            if (grossIncomeDisplayCurrency < 0) {
+            const alignedIncomeDisplayCurrency =
+              alignDisplayIncomeToInteger(grossIncomeDisplayCurrency);
+            if (!Number.isFinite(alignedIncomeDisplayCurrency) || alignedIncomeDisplayCurrency < 0) {
               return undefined;
             }
 
-            if (grossIncomeDisplayCurrency === 0) {
+            if (alignedIncomeDisplayCurrency === 0) {
               return 0;
             }
 
-            return (
-              cumulativeTaxPaidAtDisplayIncome(grossIncomeDisplayCurrency) /
-              grossIncomeDisplayCurrency *
-              RATE_PERCENT_SCALE
+            return getCachedValue(
+              cumulativeRateByIncome,
+              alignedIncomeDisplayCurrency,
+              (displayIncome) => {
+                const taxPaid = cumulativeTaxPaidAtDisplayIncome(displayIncome);
+                if (!Number.isFinite(taxPaid)) {
+                  return undefined;
+                }
+
+                return (taxPaid / displayIncome) * RATE_PERCENT_SCALE;
+              }
             );
           };
 
@@ -803,10 +936,7 @@ function App() {
   const hasEnabledCountry = visibleCountryLines.length > 0;
   const hasPlottedLines = plottedCountryLines.length > 0;
 
-  const xAxisLabel = useMemo(
-    () => createCurrencyLabelFormatter(displayCurrency),
-    [displayCurrency]
-  );
+  const xAxisLabel = useMemo(() => createCompactNumberLabelFormatter(), []);
 
   const yAxisConfig = useMemo(() => {
     const isAbsoluteMode = rateType === 'tax-paid' || rateType === 'net-pay';
@@ -1026,88 +1156,6 @@ function App() {
         </div>
 
         <div className="control-card">
-          <h2>Currency</h2>
-          <label className="select-row">
-            Display currency
-            <select
-              value={displayCurrency}
-              onChange={handleDisplayCurrencyChange}
-            >
-              {DISPLAY_CURRENCIES.map((currencyCode) => (
-                <option key={currencyCode} value={currencyCode}>
-                  {currencyCode}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="control-card">
-          <h2>Frequency</h2>
-          <label className="select-row">
-            Income frequency
-            <select value={payPeriod} onChange={handlePayPeriodChange}>
-              {PAY_PERIOD_OPTIONS.map((payPeriodOption) => (
-                <option key={payPeriodOption.id} value={payPeriodOption.id}>
-                  {payPeriodOption.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="control-card">
-          <h2>
-            {xInputUsesThousands
-              ? `X Range (thousand ${displayCurrency} ${payPeriodLabel.toLowerCase()})`
-              : `X Range (${displayCurrency} ${payPeriodLabel.toLowerCase()})`}
-          </h2>
-          <div className="range-inputs">
-            <label>
-              {xInputUsesThousands
-                ? `Min (k${displayCurrency})`
-                : `Min (${displayCurrency})`}
-              <input
-                type="number"
-                min="0"
-                step={xInputStep}
-                value={minKEurInput}
-                onChange={(event) => setMinKEurInput(event.target.value)}
-                onBlur={() =>
-                  setMinKEurInput((current) =>
-                    clampInputAtZero(current, String(defaultMinKForDisplayCurrency))
-                  )
-                }
-              />
-            </label>
-            <label>
-              {xInputUsesThousands
-                ? `Max (k${displayCurrency})`
-                : `Max (${displayCurrency})`}
-              <input
-                type="number"
-                min="0"
-                step={xInputStep}
-                value={maxKEurInput}
-                onChange={(event) => setMaxKEurInput(event.target.value)}
-                onBlur={() =>
-                  setMaxKEurInput((current) =>
-                    clampInputAtZero(current, String(defaultMaxKForDisplayCurrency))
-                  )
-                }
-              />
-            </label>
-          </div>
-          {!hasValidXRange && (
-            <p className="validation-error">
-              {xInputUsesThousands
-                ? `Enter a valid x range in thousand ${displayCurrency} where max is greater than min.`
-                : `Enter a valid x range in ${displayCurrency} where max is greater than min.`}
-            </p>
-          )}
-        </div>
-
-        <div className="control-card">
           <h2>Rate Type</h2>
           <label className="toggle-row">
             <input
@@ -1154,6 +1202,83 @@ function App() {
             />
             Net pay
           </label>
+        </div>
+
+        <div className="control-card control-card-combined">
+          <h2>Display & Range</h2>
+          <div className="combined-select-grid">
+            <label className="select-row">
+              Display currency
+              <select
+                value={displayCurrency}
+                onChange={handleDisplayCurrencyChange}
+              >
+                {DISPLAY_CURRENCIES.map((currencyCode) => (
+                  <option key={currencyCode} value={currencyCode}>
+                    {currencyCode}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="select-row">
+              Income frequency
+              <select value={payPeriod} onChange={handlePayPeriodChange}>
+                {PAY_PERIOD_OPTIONS.map((payPeriodOption) => (
+                  <option key={payPeriodOption.id} value={payPeriodOption.id}>
+                    {payPeriodOption.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p className="control-subheading">
+            {xInputUsesThousands
+              ? `X Range (thousand ${displayCurrency} ${payPeriodLabel.toLowerCase()})`
+              : `X Range (${displayCurrency} ${payPeriodLabel.toLowerCase()})`}
+          </p>
+          <div className="range-inputs">
+            <label>
+              {xInputUsesThousands
+                ? `Min (k${displayCurrency})`
+                : `Min (${displayCurrency})`}
+              <input
+                type="number"
+                min="0"
+                step={xInputStep}
+                value={minKEurInput}
+                onChange={(event) => setMinKEurInput(event.target.value)}
+                onBlur={() =>
+                  setMinKEurInput((current) =>
+                    clampInputAtZero(current, String(defaultMinKForDisplayCurrency))
+                  )
+                }
+              />
+            </label>
+            <label>
+              {xInputUsesThousands
+                ? `Max (k${displayCurrency})`
+                : `Max (${displayCurrency})`}
+              <input
+                type="number"
+                min="0"
+                step={xInputStep}
+                value={maxKEurInput}
+                onChange={(event) => setMaxKEurInput(event.target.value)}
+                onBlur={() =>
+                  setMaxKEurInput((current) =>
+                    clampInputAtZero(current, String(defaultMaxKForDisplayCurrency))
+                  )
+                }
+              />
+            </label>
+          </div>
+          {!hasValidXRange && (
+            <p className="validation-error">
+              {xInputUsesThousands
+                ? `Enter a valid x range in thousand ${displayCurrency} where max is greater than min.`
+                : `Enter a valid x range in ${displayCurrency} where max is greater than min.`}
+            </p>
+          )}
         </div>
       </section>
 
@@ -1435,9 +1560,6 @@ HelperValue : _ = { ... };`}</code></pre>
         </div>
         <div className="taxspec-editor-panel">
           <h2>Tax Code</h2>
-          <p className="taxspec-editor-hint">
-            Edit `income.tax` syntax here. Valid edits are applied to the chart immediately.
-          </p>
           <div className="taxspec-editor-frame">
             <Editor
               defaultLanguage="plaintext"
@@ -1447,6 +1569,9 @@ HelperValue : _ = { ... };`}</code></pre>
               height="100%"
             />
           </div>
+          <p className="taxspec-editor-hint">
+            Edit <code>income.tax</code> syntax here. Valid edits are applied to the chart immediately.
+          </p>
           {taxSpecificationError && (
             <p className="validation-error taxspec-editor-error">{taxSpecificationError}</p>
           )}
