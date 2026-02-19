@@ -47,7 +47,7 @@ function downsampleRowsForSvg(rows, maxPoints) {
 function resolveEvaluators(config) {
   if (config.evaluators) return config.evaluators;
 
-  const specPath = path.resolve(rootDir, 'income_tax.tax');
+  const specPath = path.resolve(rootDir, 'income.tax');
   const specification = fs.readFileSync(specPath, 'utf8');
 
   const interpreter = new TaxSpecInterpreter(
