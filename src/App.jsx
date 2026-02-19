@@ -3,6 +3,7 @@ import { Coordinates, Mafs, Plot } from 'mafs';
 import Editor from '@monaco-editor/react';
 import taxSpecification from '../income.tax?raw';
 import TaxSpecInterpreter from './TaxSpecInterpreter.js';
+import githubMark from './assets/github-mark.svg';
 import './App.css';
 
 const COUNTRY_COLORS = [
@@ -955,7 +956,19 @@ function App() {
 
   return (
     <main className="app">
-      <h1>Income Tax Plotter</h1>
+      <header className="app-header">
+        <h1>Income Tax Plotter</h1>
+        <a
+          className="github-link"
+          href="https://github.com/mitchellmcmillan/income-tax-plotter"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="View source on GitHub"
+          title="View source on GitHub"
+        >
+          <img src={githubMark} alt="" aria-hidden="true" />
+        </a>
+      </header>
 
       <section className="controls-panel">
         {/* <div className="control-card">
@@ -1384,6 +1397,14 @@ HelperValue : _ = { ... };`}</code></pre>
           )}
         </div>
       </section>
+
+      <footer className="disclaimer-panel" aria-label="Disclaimer">
+        <h2>Disclaimer</h2>
+        <p>
+          All tax rates displayed are approximations and may be completely inaccurate,
+          and should not be used for anything at all.
+        </p>
+      </footer>
     </main>
   );
 }

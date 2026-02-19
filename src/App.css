@@ -9,6 +9,14 @@
   color: #0f172a;
 }
 
+.app-header {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 .app h1,
 .app h2 {
   margin: 0;
@@ -21,6 +29,24 @@
 
 .app h2 {
   font-size: 1.05rem;
+}
+
+.github-link {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.github-link:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.github-link img {
+  width: 1.2rem;
+  height: 1.2rem;
+  display: block;
 }
 
 .controls-panel {
@@ -290,6 +316,22 @@
 .taxspec-editor-error {
   white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.disclaimer-panel {
+  border: 1px solid #fecaca;
+  border-radius: 0.75rem;
+  background: #fff1f2;
+  padding: 0.9rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.disclaimer-panel p {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  color: #881337;
 }
 
 @media (max-width: 1024px) {
