@@ -9,43 +9,55 @@ const interpreter = createIncomeTaxInterpreter();
 const COUNTRY = 'Denmark';
 const COUNTRY_LABEL = 'Denmark';
 const CURRENCY = 'DKK';
+
 const ENABLED_SCHEDULES = ['income tax', 'social security'];
+
+const AM = 0.08;
+const AFTER_AM = 1 - AM; // 0.92
+
+const PERSONFRADRAG = 54_100;
+const K_TAXABLE = PERSONFRADRAG / AFTER_AM;   // ≈ 58,804.35
+
+const K_MELLEM = 641_200 / AFTER_AM;          // ≈ 696,956.52
+const K_TOP = 777_900 / AFTER_AM;             // ≈ 845,543.48
+const K_TOPTOT = 2_592_500 / AFTER_AM;         // ≈ 2,817,934.78
+
+// Use buffers so the numerical derivative doesn't straddle thresholds.
 const SCHEDULE_INCOMES = [
   0,
-  58_805,
-  58_806,
-  68_265,
-  68_266,
-  235_200,
-  235_201,
-  304_089,
-  304_090,
-  496_471,
-  496_472,
-  696_957,
-  696_958,
-  845_543,
-  845_544,
-  2_818_152,
-  2_818_153,
+  58_802, 58_807,         // around K_TAXABLE
+  696_945, 696_970,       // around K_MELLEM
+  845_530, 845_560,       // around K_TOP
+  2_817_900, 2_817_970,   // around K_TOPTOT
 ];
-const PARITY_INCOMES = [0, 58_805, 68_265, 235_200, 496_471, 845_543, 2_818_152];
+
+const PARITY_INCOMES = [0, 58_900, 700_000, 900_000, 2_900_000];
+
 const MARGINAL_EPSILON = 1e-5;
 const PARITY_EPSILON = 1e-6;
 
+// DSL constants from your Denmark model:
+const DK_KOMMUNE_RATE = 0.254276;
+const DK_BUNDSKAT_RATE = 0.1201;
+const DK_MELLEM_RATE = 0.075;
+const DK_TOP_RATE = 0.075;
+const DK_TOPTOT_RATE = 0.05;
+
+// Marginal when DK_Taxable is active: AM + AFTER_AM*(kommune + bundskat)
+const BASE = AM + AFTER_AM * (DK_KOMMUNE_RATE + DK_BUNDSKAT_RATE);
+const ADD_MELLEM = AFTER_AM * DK_MELLEM_RATE;
+const ADD_TOP = AFTER_AM * DK_TOP_RATE;
+const ADD_TOPTOT = AFTER_AM * DK_TOPTOT_RATE;
+
 function expectedMarginalRate(income) {
-  if (income <= 58_805) return 0.08;
-  if (income <= 68_265) return 0.190492;
-  if (income <= 235_200) return 0.389005325;
-  if (income <= 304_089) return 0.377733275;
-  if (income <= 496_471) return 0.389005325;
-  if (income <= 696_957) return 0.4209428;
-  if (income <= 845_543) return 0.4899428;
-  if (income <= 2_818_152) return 0.5589428;
-  return 0.6049428;
+  if (income < K_TAXABLE) return AM;
+  if (income < K_MELLEM) return BASE;
+  if (income < K_TOP) return BASE + ADD_MELLEM;
+  if (income < K_TOPTOT) return BASE + ADD_MELLEM + ADD_TOP;
+  return BASE + ADD_MELLEM + ADD_TOP + ADD_TOPTOT;
 }
 
-test(`${COUNTRY_LABEL} marginal rates match expected schedule`, () => {
+test(`${COUNTRY_LABEL} marginal rates match DSL-based schedule`, () => {
   assertMarginalRateSamples({
     interpreter,
     country: COUNTRY,
