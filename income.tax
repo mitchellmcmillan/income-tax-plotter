@@ -1,0 +1,401 @@
+New_Zealand (NZD = 0.50899613 * EUR) {
+
+  NZ_IncomeTax : income_tax = {
+    brackets(
+      x;
+      [0..15600]: 0.105;
+      [15600..53500]: 0.175;
+      [53500..78100]: 0.30;
+      [78100..180000]: 0.33;
+      [180000..inf]: 0.39;
+    )
+  };
+
+  NZ_StudentLoan : loan_repayment = {
+    brackets(
+      x;
+      [0..24128]: 0;
+      [24128..inf]: 0.12;
+    )
+  };
+
+}
+
+Australia (AUD = 0.59642094 * EUR) {
+
+  AU_IncomeTax : income_tax = {
+    brackets(
+      x;
+      [0..18200]: 0;
+      [18200..45000]: 0.16;
+      [45000..135000]: 0.30;
+      [135000..190000]: 0.37;
+      [190000..inf]: 0.45;
+    )
+  };
+
+  AU_MedicareLevy : social_security = {
+    // Medicare levy (single) expressed as a level function:
+    //  - 0 below lower threshold
+    //  - phase-in: 10% of (x - lower)
+    //  - then 2% of income
+    piece{
+      x <= 27222: 0;
+      x <= 34027: 0.10 * (x - 27222);
+      else: 0.02 * x;
+    }
+  };
+
+  AU_HELP : loan_repayment = {
+    piece{
+        x <= 67000: 0;
+        x <= 125000: 0.15 * (x - 67000);
+        x <= 179285: 8700 + 0.17 * (x - 125000);
+        else: 0.10 * x;
+    }
+  };
+
+}
+
+Germany (EUR) {
+
+  // ---------- Übergangsbereich / Minijob parameters (2026) ----------
+  // Minijob limit: 603 €/month (7,236 €/year). Übergangsbereich: 603.01..2,000 €/month.
+  // Factor F (2026): 0.6619.   [oai_citation:6‡Minijob Magazin](https://magazin.minijob-zentrale.de/minijob-2026-aenderungen/)
+  DE_G   : _ = { 603 };     // lower bound used in formula (monthly, rounded)
+  DE_U   : _ = { 2000 };    // upper bound (monthly)
+  DE_F   : _ = { 0.6619 };  // factor F for 2026
+
+  // Helper: monthly wage implied by annual x
+  DE_AE  : _ = { x / 12 };
+
+  // Helper: "beitragspflichtige Einnahme" for EMPLOYEE share in transition zone (monthly).
+  // Short formula for 2026 employee-share base (BE_AN): 1.431639227*AE - 863.2784538.  [oai_citation:7‡Die Techniker](https://www.tk.de/resource/blob/2031420/c5924456e673ed942a4be369a4ad070f/beratungsblatt-beschaeftigung-im-uebergangs-midijobbereich-data.pdf)
+  // General-form source also exists (F,G,U).  [oai_citation:8‡mobil-krankenkasse.de](https://mobil-krankenkasse.de/arbeitgeber/rund-um-die-sozialversicherung/beitraege/uebergangsbereich-midijobs.html)
+  DE_BE_AN_month : _ = {
+      let AE = T(DE_AE);
+      piece{
+      AE <= T(DE_G): 0;   // Minijob default: employee pays 0 (incl. pension default exemption)
+
+      AE <= T(DE_U): 1.431639227 * AE - 863.2784538;
+
+      else: AE;
+    }
+  };
+
+  // Convert monthly reduced base back to annual for ceiling handling
+  DE_BE_AN_year : _ = { 12 * T(DE_BE_AN_month) };
+
+  // ---------- Social security (employee share, with Minijob + Übergangsbereich ramp) ----------
+
+  // Health: employee 8.75% on employee-base, capped at 69,750/year
+  DE_Health : social_security = {
+    0.0875 * min(pos(T(DE_BE_AN_year)), 69750)
+  };
+
+  // Long-term care: employee 1.80% on employee-base, capped at 69,750/year
+  DE_Care : social_security = {
+    0.018 * min(pos(T(DE_BE_AN_year)), 69750)
+  };
+
+  // Pension: employee 9.3% on employee-base, capped at 101,400/year
+  DE_Pension : social_security = {
+    0.093 * min(pos(T(DE_BE_AN_year)), 101400)
+  };
+
+  // Unemployment: employee 1.3% on employee-base, capped at 101,400/year
+  DE_Unemployment : social_security = {
+    0.013 * min(pos(T(DE_BE_AN_year)), 101400)
+  };
+
+  // ---------- Helper: taxable-income proxy zvE from gross wage ----------
+  DE_zvE0 : _ = {
+    let W = 1230; // Werbungskosten-Pauschbetrag
+    pos(
+      x
+      - W
+      - T(DE_Health)
+      - T(DE_Care)
+      - T(DE_Pension)
+      - T(DE_Unemployment)
+    )
+  };
+
+  // ---------- Helper: statutory tariff on zvE (Grundtarif 2026) ----------
+  DE_EStTariffOnZVE : _ = {
+    // let xi = floor(x, 1);
+    let xi = x;
+
+    let y  = (xi - 12348) / 10000;
+    let z  = (xi - 17799) / 10000;
+
+    let tax = piece{
+      xi <= 12348: 0;
+      xi <= 17799: (914.51 * y + 1400) * y;
+      xi <= 69878: (173.10 * z + 2397) * z + 1034.87;
+      xi <= 277825: 0.42 * xi - 11135.63;
+      else: 0.45 * xi - 19470.38;
+    };
+
+    tax
+
+    //floor(tax, 1)
+  };
+
+  // ---------- Income tax on gross wage, with deductible church tax circularity ----------
+  DE_ESt : income_tax = {
+    let zve0 = T(DE_zvE0);
+
+    let K = fix(
+      0,
+      0.09 * eval(DE_EStTariffOnZVE, pos(zve0 - k))
+    );
+
+    let zve = pos(zve0 - K);
+    eval(DE_EStTariffOnZVE, zve)
+  };
+
+  // ---------- Church tax ----------
+  // n.b. this is 8% in Baden-Württemberg and Bavaria
+  DE_ChurchTax : religious = {
+    0.09 * T(DE_ESt)
+  };
+
+  // ---------- Solidaritätszuschlag ----------
+  DE_Soli : income_tax = {
+    let est = T(DE_ESt);
+    let F = 20350;
+    min(0.055 * est, 0.119 * pos(est - F))
+  };
+
+}
+
+
+UK_ex_Scotland (GBP = 1.1499578 * EUR) {
+
+  UK_IncomeTax : income_tax = {
+    let PA = max(0, 12570 - 0.5 * max(0, x - 100000));
+
+    bracketsTaxable(x, PA, 12570;
+        [0..12570]: 0;
+        [12570..50270]: 0.20;
+        [50270..125140]: 0.40;
+        [125140..inf]: 0.45;
+    )
+ };
+
+  UK_NI : social_security = {
+    // Class 1 primary NI (annualised, simplified)
+    brackets(
+      x;
+      [0..12570]: 0;
+      [12570..50270]: 0.08;
+      [50270..inf]: 0.02;
+    )
+  };
+
+  UK_StudentLoan : loan_repayment = {
+    // Plan 5: 9% marginal above threshold
+    brackets(
+      x;
+      [0..26065]: 0;
+      [26065..inf]: 0.09;
+    )
+  };
+
+}
+
+Scotland (GBP = 1.1499578 * EUR) {
+
+  SC_IncomeTax : income_tax = {
+    let PA = max(0, 12570 - 0.5 * max(0, x - 100000));
+
+    bracketsTaxable(x, PA, 12570;
+        [0..12570]: 0;
+        [12570..15397]: 0.19;
+        [15397..27491]: 0.20;
+        [27491..43662]: 0.21;
+        [43662..75000]: 0.42;
+        [75000..125140]: 0.45;
+        [125140..inf]: 0.48;
+    )
+  };
+
+  SC_NI : social_security = {
+    // NI is UK-wide (annualised, simplified)
+    brackets(
+      x;
+      [0..12570]: 0;
+      [12570..50270]: 0.08;
+      [50270..inf]: 0.02;
+    )
+  };
+
+}
+
+Norway (NOK = 0.0888074 * EUR) {
+
+  NO_Alminnelig : income_tax = {
+    // Simplified “gross wage concept” representation (as per your current file):
+    // 22% applied only above an effective threshold.
+    brackets(
+      x;
+      [0..210240]: 0;
+      [210240..inf]: 0.22;
+    )
+  };
+
+  NO_Trinnskatt : income_tax = {
+    brackets(
+      x;
+      [0..226100]: 0;
+      [226100..318300]: 0.017;
+      [318300..725050]: 0.04;
+      [725050..980100]: 0.137;
+      [980100..1467200]: 0.168;
+      [1467200..inf]: 0.178;
+    )
+  };
+
+  NO_Trygdeavgift : social_security = {
+    // Trygdeavgift (wage age 17–69), expressed as a level function with a phase-in:
+    // 0 below lower threshold, then 25% phase-in, then 7.6% thereafter with continuity at the join.
+    piece{
+      x <= 99650: 0;
+      x <= 143176: 0.25 * (x - 99650);
+      else: 0.076 * x - (0.076 * 143176 - 0.25 * (143176 - 99650));
+    }
+  };
+
+}
+
+Netherlands (EUR = 1 * EUR) {
+
+  // -------------------------------
+  // 1. Box 1 statutory tariff (2026)
+  // -------------------------------
+  // Belastingdienst example uses:
+  //  - 35.75% up to 38,883
+  //  - 37.56% for 38,883..78,426
+  //  - 49.50% above 78,426
+  // (These include volksverzekeringen in schijf 1.)
+  NL_Box1_Tariff : _ = {
+    brackets(
+      x;
+      [0..38883]:   0.3575;
+      [38883..78426]: 0.3756;
+      [78426..inf]: 0.495;
+    )
+  };
+
+  // -----------------------------------------
+  // 2. General tax credit (Algemene heffingskorting)
+  // -----------------------------------------
+  // Under AOW-age (2026):
+  //  - up to 29,736: 3,115
+  //  - 29,737..78,426: 3,115 - 6.398% * (income - 29,736)
+  //  - >= 78,427: 0
+  //
+  // This is a CREDIT, so we model it as a positive amount to subtract later.
+  NL_AHK : _ = {
+    piece{
+      x <= 29736: 3115;
+      x <= 78426: 3115 - 0.06398 * (x - 29736);
+      else: 0;
+    }
+  };
+
+  // -----------------------------------------
+  // 3. Labour tax credit (Arbeidskorting)
+  // -----------------------------------------
+  // Under AOW-age (2026):
+  //  - <= 11,965: 8.324% * income
+  //  - 11,966..25,845: 996 + 31.009% * (income - 11,965)
+  //  - 25,846..45,592: 5,300 + 1.950% * (income - 25,845)
+  //  - 45,593..132,920: 5,685 - 6.510% * (income - 45,592)
+  //  - >= 132,921: 0
+  NL_AK : _ = {
+    piece{
+      x <= 11965:   0.08324 * x;
+      x <= 25845:   996 + 0.31009 * (x - 11965);
+      x <= 45592:   5300 + 0.01950 * (x - 25845);
+      x <= 132920:  5685 - 0.06510 * (x - 45592);
+      else: 0;
+    }
+  };
+
+  // -----------------------------------------
+  // 4. Payable income tax after credits
+  // -----------------------------------------
+  // Credits reduce the assessed box-1 tax, but not below zero in this simple model.
+  NL_IncomeTax_Payable : income_tax = {
+    let base = T(NL_Box1_Tariff);
+    let credits = T(NL_AHK) + T(NL_AK);
+    max(0, base - credits)
+  };
+
+}
+
+Denmark (DKK = 0.13385569 * EUR) {
+
+  // Defaults below are the simple mean across all municipalities for 2026
+  DK_KommuneRate : _ = { 0.254276 };   // ~25.43%
+  DK_ChurchRate  : _ = { 0.009256 };   // ~0.93%
+
+  // -----------------------
+  // Bases
+  // -----------------------
+  DK_AM_Bidrag : social_security = {
+    0.08 * x
+  };
+
+  // “After AM” base (many DK thresholds are expressed on an after-AM concept in practice)
+  DK_BaseAfterAM : _ = {
+    pos(x - T(DK_AM_Bidrag))
+  };
+
+  // Personal allowance / tax exemption amount (personfradrag), 2026
+  DK_Personfradrag : _ = { 54100 };
+
+  // Simple taxable base used for municipal/church/bundskat in this model:
+  // (Real DK law has more deductions/allowances; you can extend this base later.)
+  DK_Taxable : _ = {
+    pos(T(DK_BaseAfterAM) - T(DK_Personfradrag))
+  };
+
+  // -----------------------
+  // Municipal + church
+  // -----------------------
+  DK_Kommuneskat : income_tax = {
+    T(DK_KommuneRate) * T(DK_Taxable)
+  };
+
+  DK_Kirkeskat : religious = {
+    T(DK_ChurchRate) * T(DK_Taxable)
+  };
+
+  // -----------------------
+  // State taxes
+  // -----------------------
+  // Bundskat: 12.01% (modelled here on DK_Taxable)
+  DK_Bundskat : income_tax = {
+    0.1201 * T(DK_Taxable)
+  };
+
+  // Mellemskat: +7.5% above threshold (after AM)
+  DK_Mellemskat : income_tax = {
+    0.075 * pos(T(DK_BaseAfterAM) - 641200)
+  };
+
+  // Topskat: +7.5% above higher threshold (after AM)
+  DK_Topskat : income_tax = {
+    0.075 * pos(T(DK_BaseAfterAM) - 777900)
+  };
+
+  // Top-topskat: +5% above very high threshold (after AM)
+  DK_Toptopskat : income_tax = {
+    0.05 * pos(T(DK_BaseAfterAM) - 2592500)
+  };
+
+}
+
