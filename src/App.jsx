@@ -1205,7 +1205,7 @@ function App() {
         </div>
 
         <div className="control-card control-card-combined">
-          <h2>Display & Range</h2>
+          <h2>Display</h2>
           <div className="combined-select-grid">
             <label className="select-row">
               Display currency
@@ -1232,15 +1232,11 @@ function App() {
             </label>
           </div>
           <p className="control-subheading">
-            {xInputUsesThousands
-              ? `X Range (thousand ${displayCurrency} ${payPeriodLabel.toLowerCase()})`
-              : `X Range (${displayCurrency} ${payPeriodLabel.toLowerCase()})`}
+            X range ({xInputUsesThousands ? `k${displayCurrency}` : displayCurrency} {payPeriodLabel.toLowerCase()})
           </p>
           <div className="range-inputs">
             <label>
-              {xInputUsesThousands
-                ? `Min (k${displayCurrency})`
-                : `Min (${displayCurrency})`}
+              Min ({xInputUsesThousands ? `k${displayCurrency}` : displayCurrency})
               <input
                 type="number"
                 min="0"
@@ -1255,9 +1251,7 @@ function App() {
               />
             </label>
             <label>
-              {xInputUsesThousands
-                ? `Max (k${displayCurrency})`
-                : `Max (${displayCurrency})`}
+              Max ({xInputUsesThousands ? `k${displayCurrency}` : displayCurrency})
               <input
                 type="number"
                 min="0"
@@ -1275,8 +1269,8 @@ function App() {
           {!hasValidXRange && (
             <p className="validation-error">
               {xInputUsesThousands
-                ? `Enter a valid x range in thousand ${displayCurrency} where max is greater than min.`
-                : `Enter a valid x range in ${displayCurrency} where max is greater than min.`}
+                ? `Enter a valid x range in thousand ${displayCurrency} ${payPeriodLabel.toLowerCase()} where max is greater than min.`
+                : `Enter a valid x range in ${displayCurrency} ${payPeriodLabel.toLowerCase()} where max is greater than min.`}
             </p>
           )}
         </div>
