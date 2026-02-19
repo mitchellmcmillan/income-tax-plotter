@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "generate:taxspec-parser": "./scripts/generate-taxspec-parser.sh",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d build"
+    "deploy": "gh-pages -d dist"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
