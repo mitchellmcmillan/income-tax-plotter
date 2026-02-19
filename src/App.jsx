@@ -154,7 +154,7 @@ const DEFAULT_ENABLED_COUNTRIES = Object.fromEntries(
 const DEFAULT_ENABLED_SCHEDULES = Object.fromEntries(
   SCHEDULE_TYPES.map((scheduleType) => [
     scheduleType,
-    !/(student|education)\s+loan/i.test(scheduleType),
+    !/(?:student|education)\s+loan|religious\s+tax/i.test(scheduleType),
   ])
 );
 const CURRENCY_TO_EUR_MAP = new Map(Object.entries(CURRENCY_TO_EUR_RATES));
