@@ -70,16 +70,16 @@ Germany (EUR) {
   DE_AE  : _ = { x / 12 };
 
   // Helper: "beitragspflichtige Einnahme" for EMPLOYEE share in transition zone (monthly).
-  // Short formula for 2026 employee-share base (BE_AN): 1.431639227*AE - 863.2784538.  [oai_citation:7‡Die Techniker](https://www.tk.de/resource/blob/2031420/c5924456e673ed942a4be369a4ad070f/beratungsblatt-beschaeftigung-im-uebergangs-midijobbereich-data.pdf)
-  // General-form source also exists (F,G,U).  [oai_citation:8‡mobil-krankenkasse.de](https://mobil-krankenkasse.de/arbeitgeber/rund-um-die-sozialversicherung/beitraege/uebergangsbereich-midijobs.html)
+  // [oai_citation:8‡mobil-krankenkasse.de](https://mobil-krankenkasse.de/arbeitgeber/rund-um-die-sozialversicherung/beitraege/uebergangsbereich-midijobs.html)
   DE_BE_AN_month : _ = {
-      let AE = T(DE_AE);
-      piece{
-      AE <= T(DE_G): 0;   // Minijob default: employee pays 0 (incl. pension default exemption)
+    let AE = T(DE_AE);
+    let G  = T(DE_G);
+    let U  = T(DE_U);
 
-      AE <= T(DE_U): 1.431639227 * AE - 863.2784538;
-
-      else: AE;
+    piece{
+      AE <= G: 0;                                   // Minijob (default employee 0)
+      AE <= U: (U / (U - G)) * (AE - G);            // Übergangsbereich employee base
+      else: AE;                                     // normal case
     }
   };
 
