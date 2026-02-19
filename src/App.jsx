@@ -177,6 +177,7 @@ const LARGE_DIGIT_CURRENCIES = new Set(['NOK', 'DKK', 'JPY']);
 const RATE_TYPE_TO_HASH = {
   marginal: 'marginal',
   cumulative: 'overall',
+  'marginal-overall': 'marginal_overall',
   'tax-paid': 'tax_paid',
   'net-pay': 'net_pay',
 };
@@ -184,6 +185,9 @@ const HASH_TO_RATE_TYPE = new Map([
   ['marginal', 'marginal'],
   ['overall', 'cumulative'],
   ['cumulative', 'cumulative'],
+  ['marginal_overall', 'marginal-overall'],
+  ['marginal-overall', 'marginal-overall'],
+  ['marginaloverall', 'marginal-overall'],
   ['tax_paid', 'tax-paid'],
   ['taxpaid', 'tax-paid'],
   ['tax-paid', 'tax-paid'],
@@ -817,21 +821,30 @@ function App() {
           const incomeDisplayCurrency =
             renderMinDisplayCurrency +
             ((renderMaxDisplayCurrency - renderMinDisplayCurrency) * index) / sampleCount;
-          const value =
-            rateType === 'marginal'
-              ? countryLine.marginalRateAtDisplayIncome(incomeDisplayCurrency)
-              : rateType === 'cumulative'
-                ? countryLine.cumulativeRateAtDisplayIncome(incomeDisplayCurrency)
-                : rateType === 'tax-paid'
-                  ? countryLine.cumulativeTaxPaidAtDisplayIncome(incomeDisplayCurrency)
-                  : countryLine.netPayAtDisplayIncome(incomeDisplayCurrency);
+          const values =
+            rateType === 'marginal-overall'
+              ? [
+                  countryLine.cumulativeRateAtDisplayIncome(incomeDisplayCurrency),
+                  countryLine.marginalRateAtDisplayIncome(incomeDisplayCurrency),
+                ]
+              : [
+                  rateType === 'marginal'
+                    ? countryLine.marginalRateAtDisplayIncome(incomeDisplayCurrency)
+                    : rateType === 'cumulative'
+                      ? countryLine.cumulativeRateAtDisplayIncome(incomeDisplayCurrency)
+                      : rateType === 'tax-paid'
+                        ? countryLine.cumulativeTaxPaidAtDisplayIncome(incomeDisplayCurrency)
+                        : countryLine.netPayAtDisplayIncome(incomeDisplayCurrency),
+                ];
 
-          if (Number.isFinite(value)) {
-            if (value > maxValue) {
-              maxValue = value;
-            }
-            if (value < minValue) {
-              minValue = value;
+          for (const value of values) {
+            if (Number.isFinite(value)) {
+              if (value > maxValue) {
+                maxValue = value;
+              }
+              if (value < minValue) {
+                minValue = value;
+              }
             }
           }
         }
@@ -842,7 +855,10 @@ function App() {
     const safeMaxValue = maxValue > 0 ? maxValue : fallbackMax;
     const safeMinValue = minValue < 0 ? minValue : 0;
     const computedYMin = Math.min(-0.1 * safeMaxValue, 1.1 * safeMinValue);
-    const yMin = rateType === 'cumulative' ? Math.max(computedYMin, -10) : computedYMin;
+    const yMin =
+      rateType === 'cumulative' || rateType === 'marginal-overall'
+        ? Math.max(computedYMin, -10)
+        : computedYMin;
     const yMax = 1.1 * safeMaxValue;
     const yStep = chooseNiceStep(yMax - yMin, 8);
 
@@ -1115,6 +1131,15 @@ function App() {
             <input
               type="radio"
               name="rate-type"
+              checked={rateType === 'marginal-overall'}
+              onChange={() => setRateType('marginal-overall')}
+            />
+            Marginal + overall tax rate
+          </label>
+          <label className="toggle-row">
+            <input
+              type="radio"
+              name="rate-type"
               checked={rateType === 'tax-paid'}
               onChange={() => setRateType('tax-paid')}
             />
@@ -1164,6 +1189,18 @@ function App() {
             );
           })}
         </div>
+        {rateType === 'marginal-overall' && (
+          <div className="legend-metric-list">
+            <span className="legend-item">
+              <span className="legend-line" />
+              Overall tax rate
+            </span>
+            <span className="legend-item">
+              <span className="legend-line dashed" />
+              Marginal tax rate
+            </span>
+          </div>
+        )}
       </section>
 
       <section className="graph-panel">
@@ -1191,23 +1228,41 @@ function App() {
               svgPathProps={{ strokeDasharray: '2 6' }}
             />
           )}
-          {plottedCountryLines.map((countryLine) => (
-            <Plot.OfX
-              key={countryLine.country}
-              y={
-                rateType === 'marginal'
-                  ? countryLine.marginalRateAtDisplayIncome
-                  : rateType === 'cumulative'
-                    ? countryLine.cumulativeRateAtDisplayIncome
-                    : rateType === 'tax-paid'
-                      ? countryLine.cumulativeTaxPaidAtDisplayIncome
-                      : countryLine.netPayAtDisplayIncome
-              }
-              domain={[renderMinDisplayCurrency, renderMaxDisplayCurrency]}
-              color={countryLine.color}
-              weight={2}
-            />
-          ))}
+          {rateType === 'marginal-overall'
+            ? plottedCountryLines.flatMap((countryLine) => [
+                <Plot.OfX
+                  key={`${countryLine.country}-overall`}
+                  y={countryLine.cumulativeRateAtDisplayIncome}
+                  domain={[renderMinDisplayCurrency, renderMaxDisplayCurrency]}
+                  color={countryLine.color}
+                  weight={2}
+                />,
+                <Plot.OfX
+                  key={`${countryLine.country}-marginal`}
+                  y={countryLine.marginalRateAtDisplayIncome}
+                  domain={[renderMinDisplayCurrency, renderMaxDisplayCurrency]}
+                  color={countryLine.color}
+                  weight={2}
+                  svgPathProps={{ strokeDasharray: '6 6' }}
+                />,
+              ])
+            : plottedCountryLines.map((countryLine) => (
+                <Plot.OfX
+                  key={countryLine.country}
+                  y={
+                    rateType === 'marginal'
+                      ? countryLine.marginalRateAtDisplayIncome
+                      : rateType === 'cumulative'
+                        ? countryLine.cumulativeRateAtDisplayIncome
+                        : rateType === 'tax-paid'
+                          ? countryLine.cumulativeTaxPaidAtDisplayIncome
+                          : countryLine.netPayAtDisplayIncome
+                  }
+                  domain={[renderMinDisplayCurrency, renderMaxDisplayCurrency]}
+                  color={countryLine.color}
+                  weight={2}
+                />
+              ))}
           <Coordinates.Cartesian
             xAxis={{ axis: true, labels: false, lines: false }}
             yAxis={{ axis: true, labels: false, lines: false }}
