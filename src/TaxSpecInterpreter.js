@@ -4,6 +4,7 @@ import TaxSpecParser from './antlr/TaxSpecParser.js';
 import {
   CollectingErrorListener,
   ensureArray,
+  extractNumericLiterals,
   extractConversionRate,
   maybeFinite,
   normalizeCurrency,
@@ -102,6 +103,7 @@ export default class TaxSpecInterpreter {
       if (countries.has(countryKey)) {
         throw new Error(`Duplicate country definition: ${countryName}`);
       }
+      const numericLiterals = extractNumericLiterals(countryCtx.getText());
 
       // currencyMeta is optional; conversion can be declared as:
       // Country (CUR = 0.60 * EUR) { ... } or Country (11.25 CUR = EUR) { ... }
@@ -228,6 +230,7 @@ export default class TaxSpecInterpreter {
         currency,
         currencyKey: normalizeCurrency(currency),
         currencyToEur,
+        numericLiterals,
         components,
         byKindAndName,
         byKind,

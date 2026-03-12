@@ -60,6 +60,29 @@ export function parseStringLiteral(tokenText) {
   }
 }
 
+export function extractNumericLiterals(sourceText) {
+  const text = String(sourceText ?? '');
+  const numericLiterals = [];
+  const seen = new Set();
+
+  for (const match of text.matchAll(/(^|[^0-9A-Za-z_])(-?(?:\d+(?:\.\d+)?|\.\d+))(?![0-9A-Za-z_])/g)) {
+    const value = Number(match[2]);
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+
+    const key = String(value);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    numericLiterals.push(value);
+  }
+
+  return numericLiterals;
+}
+
 export function integrateNumerically(evaluate, lower, upper) {
   if (!Number.isFinite(lower) || !Number.isFinite(upper) || upper <= lower) return 0;
 

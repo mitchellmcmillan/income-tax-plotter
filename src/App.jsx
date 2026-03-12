@@ -645,6 +645,55 @@ function buildContinuousDomainsFromJumps(domainMin, domainMax, jumps) {
   return continuousDomains;
 }
 
+function splitContinuousDomainAtBreaks(domain, forcedBreaks) {
+  if (
+    !Array.isArray(domain) ||
+    domain.length !== 2 ||
+    !Number.isFinite(domain[0]) ||
+    !Number.isFinite(domain[1]) ||
+    domain[1] <= domain[0]
+  ) {
+    return [];
+  }
+
+  if (!Array.isArray(forcedBreaks) || forcedBreaks.length === 0) {
+    return [domain];
+  }
+
+  const [domainStart, domainEnd] = domain;
+  const relevantBreaks = forcedBreaks.filter(
+    (forcedBreak) =>
+      Number.isFinite(forcedBreak) &&
+      forcedBreak > domainStart + DISCONTINUITY_MIN_SEGMENT_WIDTH &&
+      forcedBreak < domainEnd - DISCONTINUITY_MIN_SEGMENT_WIDTH
+  );
+
+  if (relevantBreaks.length === 0) {
+    return [domain];
+  }
+
+  const splitDomains = [];
+  let segmentStart = domainStart;
+  for (const forcedBreak of relevantBreaks) {
+    if (forcedBreak - segmentStart > DISCONTINUITY_MIN_SEGMENT_WIDTH) {
+      splitDomains.push([segmentStart, forcedBreak]);
+    }
+    segmentStart = forcedBreak;
+  }
+
+  if (domainEnd - segmentStart > DISCONTINUITY_MIN_SEGMENT_WIDTH) {
+    splitDomains.push([segmentStart, domainEnd]);
+  }
+
+  return splitDomains.length > 0 ? splitDomains : [domain];
+}
+
+function buildContinuousDomainsFromJumpsAndBreaks(domainMin, domainMax, jumps, forcedBreaks) {
+  return buildContinuousDomainsFromJumps(domainMin, domainMax, jumps).flatMap((domain) =>
+    splitContinuousDomainAtBreaks(domain, forcedBreaks)
+  );
+}
+
 function sampleSeriesPoints(yAccessor, domainMin, domainMax, sampleCount) {
   if (
     typeof yAccessor !== 'function' ||
@@ -1155,6 +1204,24 @@ function App() {
           const cumulativeTaxPaidByIncome = new Map();
           const cumulativeRateByIncome = new Map();
           const netPayByIncome = new Map();
+          const countryModel = runtimeInterpreter.modelByCountry.get(
+            String(countryLine.country).normalize('NFKC').trim().toLowerCase()
+          );
+          const countryCurrencyToEur =
+            CURRENCY_TO_EUR_MAP.get(countryModel?.currencyKey ?? countryLine.currency) ?? 1;
+          const rawLineBreaks = Array.isArray(countryModel?.numericLiterals)
+            ? countryModel.numericLiterals
+            : [];
+          const lineBreaksDisplayIncome = [...new Set(
+            rawLineBreaks
+              .map(
+                (breakValue) =>
+                  (breakValue * countryCurrencyToEur) /
+                  (displayCurrencyToEur * periodsPerYear)
+              )
+              .filter((breakValue) => Number.isFinite(breakValue) && breakValue >= 0)
+              .map((breakValue) => Number(breakValue.toFixed(9)))
+          )].sort((left, right) => left - right);
 
           const getCachedValue = (cacheByIncome, displayIncome, evaluate) => {
             if (cacheByIncome.has(displayIncome)) {
@@ -1267,6 +1334,7 @@ function App() {
           return {
             ...countryLine,
             activeScheduleKinds,
+            lineBreaksDisplayIncome,
             marginalRateAtDisplayIncome,
             cumulativeRateAtDisplayIncome,
             cumulativeTaxPaidAtDisplayIncome,
@@ -1462,12 +1530,14 @@ function App() {
             {
               key: `${countryLine.country}-overall`,
               yAccessor: countryLine.cumulativeRateAtDisplayIncome,
+              forcedBreaks: countryLine.lineBreaksDisplayIncome,
               color: countryLine.color,
               isDashed: false,
             },
             {
               key: `${countryLine.country}-marginal`,
               yAccessor: countryLine.marginalRateAtDisplayIncome,
+              forcedBreaks: countryLine.lineBreaksDisplayIncome,
               color: countryLine.color,
               isDashed: true,
             },
@@ -1482,6 +1552,7 @@ function App() {
                   : rateType === 'tax-paid'
                     ? countryLine.cumulativeTaxPaidAtDisplayIncome
                     : countryLine.netPayAtDisplayIncome,
+            forcedBreaks: countryLine.lineBreaksDisplayIncome,
             color: countryLine.color,
             isDashed: false,
           }));
@@ -1541,10 +1612,11 @@ function App() {
           (jump) => jump.x > domainMin && jump.x < domainMax
         );
         return {
-          continuousDomains: buildContinuousDomainsFromJumps(
+          continuousDomains: buildContinuousDomainsFromJumpsAndBreaks(
             domainMin,
             domainMax,
-            visibleJumps
+            visibleJumps,
+            seriesDescriptor.forcedBreaks
           ),
           jumps: visibleJumps,
         };
