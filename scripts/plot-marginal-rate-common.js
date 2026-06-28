@@ -44,16 +44,11 @@ function downsampleRowsForSvg(rows, maxPoints) {
   return sampled;
 }
 
-function resolveEvaluators(config) {
-  if (config.evaluators) return config.evaluators;
-
+function createEvaluators(config) {
   const specPath = path.resolve(rootDir, 'income.tax');
   const specification = fs.readFileSync(specPath, 'utf8');
 
-  const interpreter = new TaxSpecInterpreter(
-    specification,
-    config.currencyConversions || DEFAULT_CURRENCY_CONVERSIONS
-  );
+  const interpreter = new TaxSpecInterpreter(specification, DEFAULT_CURRENCY_CONVERSIONS);
   const prepared = interpreter.prepare(config.country, config.enabledSchedules, config.currency);
   return {
     marginalRate: (income) => prepared.marginalRate(income),
@@ -63,12 +58,10 @@ function resolveEvaluators(config) {
 
 function buildRows(config, evaluators) {
   const rows = [];
-  const minIncome = config.minIncome ?? 0;
-  const maxIncome = config.maxIncome ?? 200_000;
-  const step = config.step ?? 1;
+  const maxIncome = config.maxIncome;
 
   const startOverall = performance.now();
-  for (let grossIncome = minIncome; grossIncome <= maxIncome; grossIncome += step) {
+  for (let grossIncome = 0; grossIncome <= maxIncome; grossIncome += 1) {
     const marginalRate = evaluators.marginalRate(grossIncome);
     if (!Number.isFinite(marginalRate)) {
       throw new Error(`Non-finite marginalRate at income ${grossIncome}: ${marginalRate}`);
@@ -159,12 +152,9 @@ function resolveYDomain(rows, valueKey, mode, chartConfig) {
 
 function writeChartArtifacts(config, rows, chartConfig, valueKey) {
   const locale = config.locale;
-  const minIncome = config.minIncome ?? 0;
-  const maxIncome = config.maxIncome ?? 200_000;
-  const svgMaxPoints = config.svgMaxPoints ?? 500_000;
-  const xTicks = Array.isArray(config.xTicks) && config.xTicks.length > 0
-    ? config.xTicks
-    : buildLinearTicks(minIncome, maxIncome, 5).map((tick) => Math.round(tick));
+  const minIncome = 0;
+  const maxIncome = config.maxIncome;
+  const xTicks = buildLinearTicks(minIncome, maxIncome, 5).map((tick) => Math.round(tick));
 
   const artifactsDir = path.resolve(rootDir, 'artifacts');
   fs.mkdirSync(artifactsDir, { recursive: true });
@@ -197,10 +187,10 @@ function writeChartArtifacts(config, rows, chartConfig, valueKey) {
     return margin.top + (1 - t) * plotHeight;
   }
 
-  const svgRows = downsampleRowsForSvg(rows, svgMaxPoints);
+  const svgRows = downsampleRowsForSvg(rows, 500_000);
   if (svgRows.length !== rows.length) {
     console.log(
-      `[${chartConfig.label}] Downsampled SVG points from ${rows.length.toLocaleString(locale)} to ${svgRows.length.toLocaleString(locale)} (max ${svgMaxPoints.toLocaleString(locale)}).`
+      `[${chartConfig.label}] Downsampled SVG points from ${rows.length.toLocaleString(locale)} to ${svgRows.length.toLocaleString(locale)}.`
     );
   }
 
@@ -264,22 +254,20 @@ function writeChartArtifacts(config, rows, chartConfig, valueKey) {
 function defaultChartSet(config) {
   const countryLabel = config.countryLabel || config.country;
   const scenarioLabel = config.scenarioLabel || 'Selected Schedules';
-  const suffix = config.outputSuffix || '';
-  const basePrefix = config.filePrefix || `${config.country.toLowerCase().replaceAll('_', '-')}`;
+  const basePrefix = config.country.toLowerCase().replaceAll('_', '-');
 
   const defaultLineColors = {
     marginalRate: '#1d4ed8',
     overallRate: '#0891b2',
     overallTaxValue: '#b45309',
     netPay: '#0f766e',
-    ...(config.lineColors || {}),
   };
 
   return {
     marginalRate: {
       label: 'marginalRate',
       mode: 'rate',
-      title: `${countryLabel} Marginal Rate (${scenarioLabel})${suffix}`,
+      title: `${countryLabel} Marginal Rate (${scenarioLabel})`,
       csvFileName: `${basePrefix}-marginal-rate.csv`,
       svgFileName: `${basePrefix}-marginal-rate.svg`,
       csvHeader: `grossIncome${config.currency},marginalRate`,
@@ -291,7 +279,7 @@ function defaultChartSet(config) {
     overallRate: {
       label: 'overallRate',
       mode: 'rate',
-      title: `${countryLabel} Overall Tax Rate (${scenarioLabel})${suffix}`,
+      title: `${countryLabel} Overall Tax Rate (${scenarioLabel})`,
       csvFileName: `${basePrefix}-overall-rate.csv`,
       svgFileName: `${basePrefix}-overall-rate.svg`,
       csvHeader: `grossIncome${config.currency},overallTaxRate`,
@@ -303,7 +291,7 @@ function defaultChartSet(config) {
     overallTaxValue: {
       label: 'overallTaxValue',
       mode: 'value',
-      title: `${countryLabel} Overall Tax Value (${scenarioLabel})${suffix}`,
+      title: `${countryLabel} Overall Tax Value (${scenarioLabel})`,
       csvFileName: `${basePrefix}-overall-tax-value.csv`,
       svgFileName: `${basePrefix}-overall-tax-value.svg`,
       csvHeader: `grossIncome${config.currency},overallTaxValue${config.currency}`,
@@ -313,7 +301,7 @@ function defaultChartSet(config) {
     netPay: {
       label: 'netPay',
       mode: 'value',
-      title: `${countryLabel} Net Pay (${scenarioLabel})${suffix}`,
+      title: `${countryLabel} Net Pay (${scenarioLabel})`,
       csvFileName: `${basePrefix}-net-pay.csv`,
       svgFileName: `${basePrefix}-net-pay.svg`,
       csvHeader: `grossIncome${config.currency},netPay${config.currency}`,
@@ -324,7 +312,7 @@ function defaultChartSet(config) {
 }
 
 export function plotTaxCurves(config) {
-  const evaluators = resolveEvaluators(config);
+  const evaluators = createEvaluators(config);
   const { rows, elapsedMs } = buildRows(config, evaluators);
 
   console.log(
@@ -332,18 +320,10 @@ export function plotTaxCurves(config) {
   );
 
   const chartSet = defaultChartSet(config);
-  const overrides = config.chartOverrides || {};
-  const finalChartSet = {
-    marginalRate: { ...chartSet.marginalRate, ...(overrides.marginalRate || {}) },
-    overallRate: { ...chartSet.overallRate, ...(overrides.overallRate || {}) },
-    overallTaxValue: { ...chartSet.overallTaxValue, ...(overrides.overallTaxValue || {}) },
-    netPay: { ...chartSet.netPay, ...(overrides.netPay || {}) },
-  };
-
-  writeChartArtifacts(config, rows, finalChartSet.marginalRate, 'marginalRate');
-  writeChartArtifacts(config, rows, finalChartSet.overallRate, 'overallRate');
-  writeChartArtifacts(config, rows, finalChartSet.overallTaxValue, 'overallTaxValue');
-  writeChartArtifacts(config, rows, finalChartSet.netPay, 'netPay');
+  writeChartArtifacts(config, rows, chartSet.marginalRate, 'marginalRate');
+  writeChartArtifacts(config, rows, chartSet.overallRate, 'overallRate');
+  writeChartArtifacts(config, rows, chartSet.overallTaxValue, 'overallTaxValue');
+  writeChartArtifacts(config, rows, chartSet.netPay, 'netPay');
 
   console.log(`Wrote ${rows.length.toLocaleString(config.locale)} points for each chart.`);
 }

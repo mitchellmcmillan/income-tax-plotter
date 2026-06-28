@@ -53,11 +53,6 @@ class EvaluationMethods {
     });
   }
 
-  _evaluateComponentMarginalAtIncome(component, state, localIncome) {
-    const nextState = this._stateForCountryIncome(state, component.countryName, localIncome);
-    return this._evaluateComponentMarginal(component, nextState);
-  }
-
   _evaluateComponentValueAtIncome(component, state, localIncome) {
     const nextState = this._stateForCountryIncome(state, component.countryName, localIncome);
 
@@ -71,13 +66,6 @@ class EvaluationMethods {
       return this._evaluateFastPieceValue(nextState, fastPieceValuePlan);
     }
 
-    const compiledEvaluator = this._getCompiledComponentEvaluator(state.prepared, component);
-    if (compiledEvaluator) {
-      return compiledEvaluator(nextState);
-    }
-
-    if (component.bodyType === 'number') return component.constantValue;
-    if (component.bodyType === 'expr') return this._evaluateExpr(component.bodyCtx, nextState);
     return this._evaluateBlock(component.bodyCtx, nextState);
   }
 
@@ -426,8 +414,6 @@ class EvaluationMethods {
   }
 
   _buildFastBracketPlan(component) {
-    if (component.wrapperKind !== 't' || component.bodyType !== 'block') return null;
-
     const blockCtx = component.bodyCtx;
     const statements = blockCtx?.stmt ? blockCtx.stmt() : [];
     if (statements.length > 0) return null;
@@ -635,8 +621,6 @@ class EvaluationMethods {
   }
 
   _buildFastPieceValuePlan(component) {
-    if (component.wrapperKind !== 't' || component.bodyType !== 'block') return null;
-
     const blockCtx = component.bodyCtx;
     const statements = blockCtx?.stmt ? blockCtx.stmt() : [];
     if (statements.length > 0) return null;
@@ -1033,10 +1017,6 @@ class EvaluationMethods {
       for (const stmt of state.blockStatements) {
         const variableName = stmt.IDENT().getText();
         scope[variableName] = this._evaluateExpr(stmt.expr(), nextState);
-      }
-    } else if (state.compiledBlockStatements) {
-      for (const statement of state.compiledBlockStatements) {
-        scope[statement.variableName] = statement.evaluate(nextState);
       }
     }
 

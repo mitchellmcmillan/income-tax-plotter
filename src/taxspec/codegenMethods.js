@@ -430,51 +430,29 @@ ${componentFunctionBlocks}
       valueExpression = valueCode.expression;
     }
 
-    let marginalExpression = null;
+    let marginalExpression;
     let marginalSetupLines = [];
-    if (component.wrapperKind === 't') {
-      if (fastBracketPlan) {
-        marginalExpression = this._codegenEmitFastBracketMarginalExpression(fastBracketPlan, context, 'x');
-      } else if (bracketClosedFormPlan) {
-        marginalExpression = this._codegenEmitBracketClosedFormMarginalExpression(component, bracketClosedFormPlan, context, 'x');
-      } else if (fastPieceMarginalPlan) {
-        marginalExpression = this._codegenEmitFastPieceMarginalExpression(fastPieceMarginalPlan, context, 'x');
-      } else if (symbolicMarginalBodyLines) {
-        const extracted = this._codegenExtractBodyReturnExpression(symbolicMarginalBodyLines);
-        if (extracted) {
-          marginalSetupLines = extracted.lines;
-          marginalExpression = extracted.expression;
-        } else {
-          marginalExpression = `(() => {\n  ${symbolicMarginalBodyLines.join('\n  ')}\n})()`;
-        }
+    if (fastBracketPlan) {
+      marginalExpression = this._codegenEmitFastBracketMarginalExpression(fastBracketPlan, context, 'x');
+    } else if (bracketClosedFormPlan) {
+      marginalExpression = this._codegenEmitBracketClosedFormMarginalExpression(component, bracketClosedFormPlan, context, 'x');
+    } else if (fastPieceMarginalPlan) {
+      marginalExpression = this._codegenEmitFastPieceMarginalExpression(fastPieceMarginalPlan, context, 'x');
+    } else if (symbolicMarginalBodyLines) {
+      const extracted = this._codegenExtractBodyReturnExpression(symbolicMarginalBodyLines);
+      if (extracted) {
+        marginalSetupLines = extracted.lines;
+        marginalExpression = extracted.expression;
       } else {
-        marginalExpression = `__derivativeAt((__income) => ${valueFunctionName}(__income, c), x)`;
+        marginalExpression = `(() => {\n  ${symbolicMarginalBodyLines.join('\n  ')}\n})()`;
       }
-    } else if (component.wrapperKind === 'l') {
-      marginalExpression = '0';
     } else {
-      marginalExpression = `${valueFunctionName}(x, c)`;
+      marginalExpression = `__derivativeAt((__income) => ${valueFunctionName}(__income, c), x)`;
     }
 
-    let totalExpression = null;
-    if (component.wrapperKind === 't') {
-      if (bracketClosedFormPlan) {
-        totalExpression = this._codegenEmitBracketClosedFormExpression(bracketClosedFormPlan, context);
-      } else if (fastPieceValuePlan) {
-        totalExpression = `${valueFunctionName}(x, c)`;
-      } else {
-        totalExpression = `${valueFunctionName}(x, c)`;
-      }
-    } else if (component.wrapperKind === 'l') {
-      totalExpression = `${valueFunctionName}(x, c)`;
-    } else {
-      if (component.bodyType === 'number') {
-        const valueLiteral = this._codegenNumberLiteral(component.constantValue);
-        totalExpression = component.constantValue === 0 ? '0' : `(${valueLiteral}) * x`;
-      } else {
-        totalExpression = `__integrate((__income) => ${marginalFunctionName}(__income, c), 0, x)`;
-      }
-    }
+    const totalExpression = bracketClosedFormPlan
+      ? this._codegenEmitBracketClosedFormExpression(bracketClosedFormPlan, context)
+      : `${valueFunctionName}(x, c)`;
 
     const circularErrorMessage = JSON.stringify(
       `Circular component reference detected: ${component.countryName}.${component.kind}.${component.componentName}`
@@ -500,11 +478,11 @@ ${componentFunctionBlocks}
           ? symbolicMarginalBodyLines
           : [`return ${marginalExpression};`];
 
-      const totalBypassBody = component.wrapperKind === 't' && fastBracketPlan
+      const totalBypassBody = fastBracketPlan
         ? this._codegenEmitFastBracketTotalBodyLines(fastBracketPlan, context, 'x')
-        : component.wrapperKind === 't' && bracketClosedFormPlan
+        : bracketClosedFormPlan
           ? this._codegenEmitBracketClosedFormBodyLines(bracketClosedFormPlan, context)
-        : component.wrapperKind === 't' && fastPieceValuePlan
+        : fastPieceValuePlan
           ? [
               'if (x <= 0) return 0;',
               ...this._codegenEmitFastPieceValueBodyLines(fastPieceValuePlan, context, 'x'),
@@ -685,13 +663,6 @@ ${componentFunctionBlocks}
   }
 
   _codegenEmitComponentValueExpression(component, context, options = {}) {
-    if (component.bodyType === 'number') {
-      return {
-        lines: [],
-        expression: this._codegenNumberLiteral(component.constantValue),
-      };
-    }
-
     const countryModel = options.countryModel || context.countryByKey.get(component.countryKey);
     if (!countryModel) return null;
 
@@ -713,18 +684,10 @@ ${componentFunctionBlocks}
       inlineStack,
     };
 
-    if (component.bodyType === 'expr') {
-      const expression = this._codegenExpr(component.bodyCtx, env);
-      if (expression === null) return null;
-      return { lines: [], expression };
-    }
-
     return this._codegenCompileTopLevelBlock(component.bodyCtx, env);
   }
 
   _codegenBuildBracketClosedFormPlan(component, context, options = {}) {
-    if (component.wrapperKind !== 't' || component.bodyType !== 'block') return null;
-
     const countryModel = context.countryByKey.get(component.countryKey);
     if (!countryModel) return null;
     const xExpr = options.xExpr ?? 'x';
@@ -1117,8 +1080,6 @@ ${componentFunctionBlocks}
 
   _codegenEstimateInlineCost(component) {
     if (!component) return Infinity;
-    if (component.bodyType === 'number') return 1;
-    if (component.bodyType === 'expr') return 4;
 
     const statementCount = component.bodyCtx?.stmt ? component.bodyCtx.stmt().length : 0;
     const bodyLength = component.bodyCtx?.getText ? component.bodyCtx.getText().length : 0;
@@ -1137,21 +1098,11 @@ ${componentFunctionBlocks}
     // Keep inlining shallow and avoid duplicating large block bodies at call sites.
     if (inlineStack.size >= 5) return false;
 
-    if (component.bodyType === 'number') return true;
-    if (component.bodyType === 'expr') {
-      if (dependencyCount > 0) return false;
-      return this._codegenEstimateInlineCost(component) <= 16;
-    }
-
-    if (component.bodyType === 'block') {
-      const stmtCount = component.bodyCtx?.stmt ? component.bodyCtx.stmt().length : 0;
-      if (stmtCount !== 0) return false;
-      if (this._getFastBracketPlan(component)) return true;
-      if (this._getFastPieceValuePlan(component)) return true;
-      return this._codegenEstimateInlineCost(component) <= 12;
-    }
-
-    return false;
+    const stmtCount = component.bodyCtx?.stmt ? component.bodyCtx.stmt().length : 0;
+    if (stmtCount !== 0) return false;
+    if (this._getFastBracketPlan(component)) return true;
+    if (this._getFastPieceValuePlan(component)) return true;
+    return dependencyCount === 0 && this._codegenEstimateInlineCost(component) <= 12;
   }
 
   _codegenCanInlineComponentMarginal(component, env) {
@@ -1162,20 +1113,11 @@ ${componentFunctionBlocks}
     if (inlineStack.has(componentKey)) return false;
     if (inlineStack.size >= 5) return false;
 
-    if (component.wrapperKind === 'l') return true;
-    if (component.wrapperKind === 'm') return this._codegenCanInlineComponentValue(component, env);
-    if (component.wrapperKind !== 't') return false;
-
     if (this._getFastBracketPlan(component)) return true;
     if (this._getFastPieceMarginalPlan(component)) return true;
     if (this._codegenBuildBracketClosedFormPlan(component, env.context)) return true;
-    if (component.bodyType === 'number') return true;
-    if (component.bodyType === 'expr') return this._codegenEstimateInlineCost(component) <= 16;
-    if (component.bodyType === 'block') {
-      const stmtCount = component.bodyCtx?.stmt ? component.bodyCtx.stmt().length : 0;
-      return stmtCount === 0 && this._codegenEstimateInlineCost(component) <= 12;
-    }
-    return false;
+    const stmtCount = component.bodyCtx?.stmt ? component.bodyCtx.stmt().length : 0;
+    return stmtCount === 0 && this._codegenEstimateInlineCost(component) <= 12;
   }
 
   _codegenWrapValueCodeAsExpression(valueCode) {
@@ -1411,7 +1353,7 @@ ${componentFunctionBlocks}
   }
 
   _codegenEmitSymbolicMarginalBodyLines(component, context, xExpr = 'x', options = {}) {
-    if (!component || component.wrapperKind !== 't') return null;
+    if (!component) return null;
 
     const countryModel = context.countryByKey.get(component.countryKey);
     if (!countryModel) return null;
@@ -1432,16 +1374,6 @@ ${componentFunctionBlocks}
         return stack;
       })(),
     };
-
-    if (component.bodyType === 'number') return ['return 0;'];
-
-    if (component.bodyType === 'expr') {
-      const dual = this._codegenDualExpr(component.bodyCtx, env);
-      if (!dual) return null;
-      return [`return ${dual.derivative};`];
-    }
-
-    if (component.bodyType !== 'block') return null;
 
     const lines = [];
     for (const stmt of component.bodyCtx.stmt()) {
@@ -1844,20 +1776,6 @@ ${componentFunctionBlocks}
     return this._codegenDual(valueExpr, derivativeExpr);
   }
 
-  _codegenCanAssumeZeroDerivativeForMarginalComponent(component) {
-    if (!component || component.wrapperKind !== 'm') return false;
-    if (component.bodyType === 'number') return true;
-    if (component.bodyType === 'expr') {
-      return this._extractNumericLiteral(component.bodyCtx) !== null;
-    }
-    if (component.bodyType === 'block') {
-      const stmtCount = component.bodyCtx?.stmt ? component.bodyCtx.stmt().length : 0;
-      if (stmtCount !== 0) return false;
-      return this._extractNumericLiteral(component.bodyCtx?.expr?.()) !== null;
-    }
-    return false;
-  }
-
   _codegenExpr(exprCtx, env) {
     if (!exprCtx || !exprCtx.orExpr) return null;
     return this._codegenOrExpr(exprCtx.orExpr(), env);
@@ -2039,19 +1957,17 @@ ${componentFunctionBlocks}
     const nextInlineStack = new Set(inlineStack);
     nextInlineStack.add(this._codegenComponentMapKey(component));
 
-    if (component.wrapperKind === 't') {
-      const bracketClosedFormPlan = this._codegenBuildBracketClosedFormPlan(component, env.context, {
-        xExpr: incomeExpr,
-        inlineStack: nextInlineStack,
-      });
-      if (bracketClosedFormPlan) {
-        return this._codegenEmitBracketClosedFormExpression(bracketClosedFormPlan, env.context);
-      }
+    const bracketClosedFormPlan = this._codegenBuildBracketClosedFormPlan(component, env.context, {
+      xExpr: incomeExpr,
+      inlineStack: nextInlineStack,
+    });
+    if (bracketClosedFormPlan) {
+      return this._codegenEmitBracketClosedFormExpression(bracketClosedFormPlan, env.context);
+    }
 
-      const fastPieceValuePlan = this._getFastPieceValuePlan(component);
-      if (fastPieceValuePlan) {
-        return this._codegenEmitFastPieceValueExpression(fastPieceValuePlan, env.context, incomeExpr);
-      }
+    const fastPieceValuePlan = this._getFastPieceValuePlan(component);
+    if (fastPieceValuePlan) {
+      return this._codegenEmitFastPieceValueExpression(fastPieceValuePlan, env.context, incomeExpr);
     }
 
     const inlineEnv = {
@@ -2064,14 +1980,6 @@ ${componentFunctionBlocks}
       inlineStack: nextInlineStack,
     };
 
-    if (component.bodyType === 'number') {
-      return this._codegenNumberLiteral(component.constantValue);
-    }
-
-    if (component.bodyType === 'expr') {
-      return this._codegenExpr(component.bodyCtx, inlineEnv);
-    }
-
     const fallbackValueCode = this._codegenEmitComponentValueExpression(component, env.context, {
       countryModel: targetCountryModel,
       xExpr: incomeExpr,
@@ -2082,11 +1990,6 @@ ${componentFunctionBlocks}
 
   _codegenInlineComponentTotalExpression(component, incomeExpr, env) {
     if (!component || !env) return null;
-    if (component.wrapperKind === 'm') return null;
-
-    if (component.wrapperKind === 'l') {
-      return this._codegenInlineComponentValueExpression(component, incomeExpr, env);
-    }
 
     if (this._codegenCanAssumeNonnegativeExpression(incomeExpr)) {
       return this._codegenInlineComponentValueExpression(component, incomeExpr, env);
@@ -2101,11 +2004,6 @@ ${componentFunctionBlocks}
   _codegenInlineComponentMarginalExpression(component, incomeExpr, env) {
     if (!component || !env) return null;
     if (!this._codegenCanInlineComponentMarginal(component, env)) return null;
-
-    if (component.wrapperKind === 'l') return '0';
-    if (component.wrapperKind === 'm') {
-      return this._codegenInlineComponentValueExpression(component, incomeExpr, env);
-    }
 
     const inlineStack = env.inlineStack instanceof Set ? env.inlineStack : new Set();
     const nextInlineStack = new Set(inlineStack);
@@ -2417,12 +2315,6 @@ ${componentFunctionBlocks}
       localNames: new Set(),
     };
 
-    if (component.bodyType === 'number') return deps;
-
-    if (component.bodyType === 'expr') {
-      return this._codegenCollectExprDependencies(component.bodyCtx, env, deps) ? deps : null;
-    }
-
     const blockCtx = component.bodyCtx;
     for (const stmt of blockCtx.stmt()) {
       if (!this._codegenCollectExprDependencies(stmt.expr(), env, deps)) return null;
@@ -2626,19 +2518,6 @@ ${componentFunctionBlocks}
     }
 
     return null;
-  }
-
-  _codegenComponentCall(component, mode, incomeExpr, env) {
-    const targetCountryModel = env.context.countryByKey.get(component.countryKey);
-    if (!targetCountryModel) return null;
-
-    const convertedIncome = this._codegenConvertIncomeExpression(incomeExpr, env.countryModel, targetCountryModel);
-    if (convertedIncome === null) return null;
-
-    const componentIndex = env.context.componentIndexByKey.get(this._codegenComponentMapKey(component));
-    if (componentIndex === undefined) return null;
-
-    return this._codegenComponentCallByIndex(componentIndex, mode, convertedIncome, env);
   }
 
   _codegenComponentCallByIndex(componentIndex, mode, incomeExpr, env = null) {

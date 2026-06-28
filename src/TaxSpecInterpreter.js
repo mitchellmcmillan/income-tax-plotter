@@ -13,7 +13,6 @@ import {
   parseStringLiteral,
 } from './taxspec/shared.js';
 import { installEvaluationMethods } from './taxspec/evaluationMethods.js';
-import { installRuntimeCompileMethods } from './taxspec/runtimeCompileMethods.js';
 import { installCodegenMethods } from './taxspec/codegenMethods.js';
 
 export default class TaxSpecInterpreter {
@@ -37,7 +36,7 @@ export default class TaxSpecInterpreter {
   }
 
   prepare(country, enabledSchedules, currency) {
-    const prepared = this._prepareEvaluation(country, enabledSchedules, currency, { compile: true });
+    const prepared = this._prepareEvaluation(country, enabledSchedules, currency);
     const generated = this._tryBuildPreparedCodegen(prepared);
     if (generated) {
       return {
@@ -51,10 +50,6 @@ export default class TaxSpecInterpreter {
       marginalRate: (grossIncome) => this._evaluateMarginalFromPrepared(prepared, grossIncome),
       overallRate: (grossIncome) => this._evaluateOverallFromPrepared(prepared, grossIncome),
     };
-  }
-
-  prepareEvaluator(country, enabledSchedules, currency) {
-    return this.prepare(country, enabledSchedules, currency);
   }
 
   _parseProgram(taxSpecification) {
@@ -179,10 +174,7 @@ export default class TaxSpecInterpreter {
 
         const cellCtx = componentCtx.cell();
         const wrapper = cellCtx.wrapper();
-        const wrapperKind = 't';
-        const bodyType = 'block';
         const bodyCtx = wrapper.block();
-        const constantValue = null;
 
         const kindKey = normalizeIdentifier(kind);
         const componentKey = normalizeIdentifier(componentName);
@@ -196,10 +188,7 @@ export default class TaxSpecInterpreter {
           kindKey,
           componentName,
           componentKey,
-          wrapperKind,
-          bodyType,
           bodyCtx,
-          constantValue,
         });
       }
 
@@ -312,7 +301,7 @@ export default class TaxSpecInterpreter {
     return new Set(normalized);
   }
 
-  _prepareEvaluation(country, enabledSchedules, currency, options = {}) {
+  _prepareEvaluation(country, enabledSchedules, currency) {
     const countryModel = this._resolveCountry(country);
     const enabledSet = this._normalizeEnabledSchedules(enabledSchedules);
     const prepared = {
@@ -321,11 +310,6 @@ export default class TaxSpecInterpreter {
       sourceCurrency: normalizeCurrency(currency),
       activeComponents: this._activeComponents(countryModel, enabledSet),
     };
-
-    if (options.compile) {
-      this._initializeCompiledPrepared(prepared);
-      this._compilePreparedCountryComponents(prepared, countryModel);
-    }
 
     return prepared;
   }
@@ -434,5 +418,4 @@ export default class TaxSpecInterpreter {
 }
 
 installEvaluationMethods(TaxSpecInterpreter);
-installRuntimeCompileMethods(TaxSpecInterpreter);
 installCodegenMethods(TaxSpecInterpreter);
