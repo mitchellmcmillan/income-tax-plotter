@@ -4,14 +4,13 @@ import TaxSpecParser from './antlr/TaxSpecParser.js';
 import {
   CollectingErrorListener,
   ensureArray,
-  extractNumericLiterals,
   extractConversionRate,
   maybeFinite,
   normalizeCurrency,
   normalizeEnabledScheduleToken,
   normalizeIdentifier,
-  parseStringLiteral,
 } from './taxspec/shared.js';
+import { lowerTaxSpec } from './taxspec/lowerTaxSpec.js';
 import { installEvaluationMethods } from './taxspec/evaluationMethods.js';
 import { installCodegenMethods } from './taxspec/codegenMethods.js';
 
@@ -21,7 +20,7 @@ export default class TaxSpecInterpreter {
       throw new Error('taxSpecification must be a non-empty string.');
     }
 
-    this.modelByCountry = this._buildModel(this._parseProgram(taxSpecification));
+    this.modelByCountry = lowerTaxSpec(this._parseProgram(taxSpecification));
     this.currencyToEur = this._buildCurrencyConversions(currencyConversions, this.modelByCountry);
   }
 
@@ -71,163 +70,6 @@ export default class TaxSpecInterpreter {
       throw new Error(`Failed to parse tax specification:\n${message}`);
     }
     return tree;
-  }
-
-  _buildModel(programCtx) {
-    const countries = new Map();
-
-    for (const countryCtx of programCtx.countryBlock()) {
-      // countryName: IDENT | STRING
-      const countryNameNode = countryCtx.countryName?.() ?? null;
-      let countryName = null;
-
-      if (countryNameNode?.IDENT && countryNameNode.IDENT()) {
-        countryName = countryNameNode.IDENT().getText();
-      } else if (countryNameNode?.STRING && countryNameNode.STRING()) {
-        countryName = parseStringLiteral(countryNameNode.STRING().getText());
-      } else if (countryCtx.IDENT && countryCtx.IDENT()) {
-        // fallback if your generated parser exposes IDENT directly
-        countryName = countryCtx.IDENT().getText();
-      } else if (countryCtx.STRING && countryCtx.STRING()) {
-        countryName = parseStringLiteral(countryCtx.STRING().getText());
-      } else {
-        throw new Error('Country block missing name.');
-      }
-
-      const countryKey = normalizeIdentifier(countryName);
-      if (countries.has(countryKey)) {
-        throw new Error(`Duplicate country definition: ${countryName}`);
-      }
-      const numericLiterals = extractNumericLiterals(countryCtx.getText());
-
-      // currencyMeta is optional; conversion can be declared as:
-      // Country (CUR = 0.60 * EUR) { ... } or Country (11.25 CUR = EUR) { ... }
-      let currency = 'EUR';
-      let currencyToEur = null;
-      if (countryCtx.currencyMeta && countryCtx.currencyMeta()) {
-        const currencyMetaCtx = countryCtx.currencyMeta();
-        const currencyMetaText = currencyMetaCtx
-          .getText()
-          .replace(/^\(/, '')
-          .replace(/\)$/, '');
-
-        const directMatch = currencyMetaText.match(
-          /^([A-Za-z_][A-Za-z0-9_]*)(?:=([0-9]+(?:\.[0-9]+)?)\*([A-Za-z_][A-Za-z0-9_]*))?$/
-        );
-        const reverseMatch = currencyMetaText.match(
-          /^([0-9]+(?:\.[0-9]+)?)([A-Za-z_][A-Za-z0-9_]*)=([A-Za-z_][A-Za-z0-9_]*)$/
-        );
-
-        if (directMatch) {
-          currency = directMatch[1];
-
-          if (directMatch[2] !== undefined) {
-            const conversionRate = Number(directMatch[2]);
-            const referenceCurrency = normalizeCurrency(directMatch[3]);
-            if (referenceCurrency !== 'EUR') {
-              throw new Error(
-                `Currency metadata for ${countryName} must reference EUR, e.g. (${currency} = 0.60 * EUR).`
-              );
-            }
-
-            if (!Number.isFinite(conversionRate) || conversionRate <= 0) {
-              throw new Error(`Conversion rate must be positive for currency "${currency}".`);
-            }
-
-            currencyToEur = conversionRate;
-          }
-        } else if (reverseMatch) {
-          currency = reverseMatch[2];
-          const quotedCurrencyAmount = Number(reverseMatch[1]);
-          const referenceCurrency = normalizeCurrency(reverseMatch[3]);
-          if (referenceCurrency !== 'EUR') {
-            throw new Error(
-              `Currency metadata for ${countryName} must reference EUR, e.g. (${currency} = 0.60 * EUR) or (${quotedCurrencyAmount} ${currency} = EUR).`
-            );
-          }
-
-          if (!Number.isFinite(quotedCurrencyAmount) || quotedCurrencyAmount <= 0) {
-            throw new Error(`Conversion rate must be positive for currency "${currency}".`);
-          }
-
-          currencyToEur = 1 / quotedCurrencyAmount;
-        } else {
-          throw new Error(
-            `Invalid currency metadata for ${countryName}. Use (CUR = 0.60 * EUR) or (11.25 CUR = EUR).`
-          );
-        }
-      }
-
-      const components = [];
-
-      for (const componentCtx of countryCtx.componentDef()) {
-        // componentDef : IDENT (COLON kindToken)? ASSIGN cell SEMI?
-        const componentName = componentCtx.IDENT().getText();
-
-        let kind = '_';
-        if (componentCtx.kindToken && componentCtx.kindToken()) {
-          // kindToken : IDENT | UNDERSCORE
-          const kt = componentCtx.kindToken();
-          if (kt.IDENT && kt.IDENT()) kind = kt.IDENT().getText();
-          else kind = '_';
-        }
-
-        const cellCtx = componentCtx.cell();
-        const wrapper = cellCtx.wrapper();
-        const bodyCtx = wrapper.block();
-
-        const kindKey = normalizeIdentifier(kind);
-        const componentKey = normalizeIdentifier(componentName);
-
-        components.push({
-          id: `${kindKey}:${componentKey}`,
-          countryName,
-          countryKey,
-          currency,
-          kind,
-          kindKey,
-          componentName,
-          componentKey,
-          bodyCtx,
-        });
-      }
-
-      // Indexes
-      const byKindAndName = new Map(); // `${kindKey}:${componentKey}` -> component
-      const byKind = new Map();        // kindKey -> [components]
-      const byName = new Map();        // componentKey -> [components]
-
-      for (const component of components) {
-        const pairKey = `${component.kindKey}:${component.componentKey}`;
-        if (byKindAndName.has(pairKey)) {
-          throw new Error(
-            `Duplicate component in ${countryName}: ${component.kind}:${component.componentName}`
-          );
-        }
-        byKindAndName.set(pairKey, component);
-
-        if (!byKind.has(component.kindKey)) byKind.set(component.kindKey, []);
-        byKind.get(component.kindKey).push(component);
-
-        if (!byName.has(component.componentKey)) byName.set(component.componentKey, []);
-        byName.get(component.componentKey).push(component);
-      }
-
-      countries.set(countryKey, {
-        countryName,
-        countryKey,
-        currency,
-        currencyKey: normalizeCurrency(currency),
-        currencyToEur,
-        numericLiterals,
-        components,
-        byKindAndName,
-        byKind,
-        byName,
-      });
-    }
-
-    return countries;
   }
 
   _normalizeCurrencyConversions(currencyConversions) {

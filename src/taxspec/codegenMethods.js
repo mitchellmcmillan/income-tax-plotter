@@ -684,7 +684,7 @@ ${componentFunctionBlocks}
       inlineStack,
     };
 
-    return this._codegenCompileTopLevelBlock(component.bodyCtx, env);
+    return this._codegenCompileTopLevelBlock(component.body, env);
   }
 
   _codegenBuildBracketClosedFormPlan(component, context, options = {}) {
@@ -692,7 +692,7 @@ ${componentFunctionBlocks}
     if (!countryModel) return null;
     const xExpr = options.xExpr ?? 'x';
 
-    const blockCtx = component.bodyCtx;
+    const blockCtx = component.body;
     const localNames = new Map();
     const setupLines = [];
 
@@ -873,7 +873,7 @@ ${componentFunctionBlocks}
         scope: this._createIncomeScope(boundGrossIncome),
         callStack: new Set(),
         memo: new Map(),
-        blockStatements: component.bodyCtx?.stmt ? component.bodyCtx.stmt() : null,
+        blockStatements: component.body?.stmt ? component.body.stmt() : null,
       };
 
       const evaluateAllowance = (nextState) => this._evaluateExpr(bracketsTaxableCtx.expr(1), nextState);
@@ -1081,8 +1081,8 @@ ${componentFunctionBlocks}
   _codegenEstimateInlineCost(component) {
     if (!component) return Infinity;
 
-    const statementCount = component.bodyCtx?.stmt ? component.bodyCtx.stmt().length : 0;
-    const bodyLength = component.bodyCtx?.getText ? component.bodyCtx.getText().length : 0;
+    const statementCount = component.body?.stmt ? component.body.stmt().length : 0;
+    const bodyLength = component.body?.getText ? component.body.getText().length : 0;
     const bodyCost = Math.ceil(bodyLength / 220);
     return 6 + statementCount * 2 + bodyCost;
   }
@@ -1098,7 +1098,7 @@ ${componentFunctionBlocks}
     // Keep inlining shallow and avoid duplicating large block bodies at call sites.
     if (inlineStack.size >= 5) return false;
 
-    const stmtCount = component.bodyCtx?.stmt ? component.bodyCtx.stmt().length : 0;
+    const stmtCount = component.body?.stmt ? component.body.stmt().length : 0;
     if (stmtCount !== 0) return false;
     if (this._getFastBracketPlan(component)) return true;
     if (this._getFastPieceValuePlan(component)) return true;
@@ -1116,7 +1116,7 @@ ${componentFunctionBlocks}
     if (this._getFastBracketPlan(component)) return true;
     if (this._getFastPieceMarginalPlan(component)) return true;
     if (this._codegenBuildBracketClosedFormPlan(component, env.context)) return true;
-    const stmtCount = component.bodyCtx?.stmt ? component.bodyCtx.stmt().length : 0;
+    const stmtCount = component.body?.stmt ? component.body.stmt().length : 0;
     return stmtCount === 0 && this._codegenEstimateInlineCost(component) <= 12;
   }
 
@@ -1376,7 +1376,7 @@ ${componentFunctionBlocks}
     };
 
     const lines = [];
-    for (const stmt of component.bodyCtx.stmt()) {
+    for (const stmt of component.body.stmt()) {
       const stmtPrimary = this._extractDirectPrimary(stmt.expr());
       if (stmtPrimary?.fixCall && stmtPrimary.fixCall()) {
         const variableName = stmt.IDENT().getText();
@@ -1434,7 +1434,7 @@ ${componentFunctionBlocks}
       env.localDuals.set(variableName, this._codegenDual(valueName, derivativeExpr, dual.constValue));
     }
 
-    const resultDual = this._codegenDualExpr(component.bodyCtx.expr(), env);
+    const resultDual = this._codegenDualExpr(component.body.expr(), env);
     if (!resultDual) return null;
     lines.push(`return ${resultDual.derivative};`);
     return lines;
@@ -2315,7 +2315,7 @@ ${componentFunctionBlocks}
       localNames: new Set(),
     };
 
-    const blockCtx = component.bodyCtx;
+    const blockCtx = component.body;
     for (const stmt of blockCtx.stmt()) {
       if (!this._codegenCollectExprDependencies(stmt.expr(), env, deps)) return null;
       env.localNames.add(stmt.IDENT().getText());

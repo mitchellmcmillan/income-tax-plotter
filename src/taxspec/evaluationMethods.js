@@ -66,7 +66,7 @@ class EvaluationMethods {
       return this._evaluateFastPieceValue(nextState, fastPieceValuePlan);
     }
 
-    return this._evaluateBlock(component.bodyCtx, nextState);
+    return this._evaluateBlock(component.body, nextState);
   }
 
   _withComponentGuard(component, mode, state, callback) {
@@ -414,7 +414,7 @@ class EvaluationMethods {
   }
 
   _buildFastBracketPlan(component) {
-    const blockCtx = component.bodyCtx;
+    const blockCtx = component.body;
     const statements = blockCtx?.stmt ? blockCtx.stmt() : [];
     if (statements.length > 0) return null;
 
@@ -621,7 +621,7 @@ class EvaluationMethods {
   }
 
   _buildFastPieceValuePlan(component) {
-    const blockCtx = component.bodyCtx;
+    const blockCtx = component.body;
     const statements = blockCtx?.stmt ? blockCtx.stmt() : [];
     if (statements.length > 0) return null;
 
