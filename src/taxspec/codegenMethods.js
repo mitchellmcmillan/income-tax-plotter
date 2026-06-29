@@ -49,25 +49,21 @@ const factor = ${sourceRate / targetRate};
 const persistent = runtime.cache(${components.length});
 return {
   marginalRate(grossIncome) {
-    const income = Number(grossIncome);
-    if (!Number.isFinite(income)) throw new Error("grossIncome must be numeric.");
-    if (income === lastMarginalIncome) return lastMarginalValue;
-    const x = income * factor;
+    if (grossIncome === lastMarginalIncome) return lastMarginalValue;
+    const x = grossIncome * factor;
     if (x < 0) return 0;
     const total = ${active.map((index) => `m${index}(x,persistent)`).join('+') || '0'};
-    lastMarginalIncome = income;
-    lastMarginalValue = Number(total);
+    lastMarginalIncome = grossIncome;
+    lastMarginalValue = total;
     return lastMarginalValue;
   },
   overallRate(grossIncome) {
-    const income = Number(grossIncome);
-    if (!Number.isFinite(income)) throw new Error("grossIncome must be numeric.");
-    if (income === lastOverallIncome) return lastOverallValue;
-    const x = income * factor;
+    if (grossIncome === lastOverallIncome) return lastOverallValue;
+    const x = grossIncome * factor;
     if (x <= 0) return 0;
     const tax = ${active.map((index) => `v${index}(x,persistent)`).join('+') || '0'};
-    lastOverallIncome = income;
-    lastOverallValue = Number(tax / x);
+    lastOverallIncome = grossIncome;
+    lastOverallValue = tax / x;
     return lastOverallValue;
   }
 };`;
