@@ -1,12 +1,11 @@
 import test from 'node:test';
-import TaxSpecInterpreter from '../src/TaxSpecInterpreter.js';
-import { assertApproxEqual, assertPreparedMatchesDirect } from './test-helpers.js';
+import TaxSpec from '../src/TaxSpec.js';
+import { assertApproxEqual } from './test-helpers.js';
 
 const COUNTRY = 'Testland';
 const COUNTRY_LABEL = 'Testland';
 const CURRENCY = 'USD';
 const ENABLED_SCHEDULES = ['income tax'];
-const PARITY_INCOMES = [0, 10_000, 10_001, 20_000, 20_001, 25_000];
 const MARGINAL_EPSILON = 1e-6;
 const OVERALL_EPSILON = 1e-9;
 
@@ -23,7 +22,8 @@ Testland (USD) {
 }
 `;
 
-const interpreter = new TaxSpecInterpreter(taxSpecification, { USD: 1 });
+const interpreter = new TaxSpec(taxSpecification, { USD: 1 });
+const prepared = interpreter.prepare(COUNTRY, ENABLED_SCHEDULES, CURRENCY);
 const reverseCurrencySpecification = `
 ReverseCurrency (8 REV = EUR) {
   RC_IncomeTax : income_tax = {
@@ -34,7 +34,7 @@ ReverseCurrency (8 REV = EUR) {
   };
 }
 `;
-const reverseCurrencyInterpreter = new TaxSpecInterpreter(reverseCurrencySpecification);
+const reverseCurrencyInterpreter = new TaxSpec(reverseCurrencySpecification);
 const bareCurrencySpecification = `
 BareCurrency (EUR) {
   BC_IncomeTax : income_tax = {
@@ -45,7 +45,7 @@ BareCurrency (EUR) {
   };
 }
 `;
-const bareCurrencyInterpreter = new TaxSpecInterpreter(bareCurrencySpecification);
+const bareCurrencyInterpreter = new TaxSpec(bareCurrencySpecification);
 test(`${COUNTRY_LABEL} brackets compute total band tax in {} wrappers`, () => {
   const samples = [
     { income: 0, expectedTotal: 0 },
@@ -57,7 +57,7 @@ test(`${COUNTRY_LABEL} brackets compute total band tax in {} wrappers`, () => {
   ];
 
   for (const sample of samples) {
-    const overall = interpreter.overallRate(COUNTRY, ENABLED_SCHEDULES, CURRENCY, sample.income);
+    const overall = prepared.overallRate(sample.income);
     const total = sample.income <= 0 ? 0 : overall * sample.income;
     assertApproxEqual(total, sample.expectedTotal);
   }
@@ -74,21 +74,9 @@ test(`${COUNTRY_LABEL} brackets marginal rate uses left-hand derivative at kinks
   ];
 
   for (const sample of samples) {
-    const marginal = interpreter.marginalRate(COUNTRY, ENABLED_SCHEDULES, CURRENCY, sample.income);
+    const marginal = prepared.marginalRate(sample.income);
     assertApproxEqual(marginal, sample.expectedMarginal, MARGINAL_EPSILON);
   }
-});
-
-test(`${COUNTRY_LABEL} prepared evaluator matches direct API`, () => {
-  assertPreparedMatchesDirect({
-    interpreter,
-    country: COUNTRY,
-    enabledSchedules: ENABLED_SCHEDULES,
-    currency: CURRENCY,
-    incomes: PARITY_INCOMES,
-    marginalEpsilon: MARGINAL_EPSILON,
-    overallEpsilon: OVERALL_EPSILON,
-  });
 });
 
 test('currency metadata supports reverse syntax (N CUR = EUR)', () => {
@@ -98,12 +86,9 @@ test('currency metadata supports reverse syntax (N CUR = EUR)', () => {
   assertApproxEqual(currency.eurRate, 1 / 8, 1e-12);
 
   // 80 EUR => 640 REV under (8 REV = EUR); marginal rate stays consistent.
-  const marginal = reverseCurrencyInterpreter.marginalRate(
-    'ReverseCurrency',
-    ENABLED_SCHEDULES,
-    'EUR',
-    80
-  );
+  const marginal = reverseCurrencyInterpreter
+    .prepare('ReverseCurrency', ENABLED_SCHEDULES, 'EUR')
+    .marginalRate(80);
   assertApproxEqual(marginal, 0.10, OVERALL_EPSILON);
 });
 
@@ -113,11 +98,8 @@ test('currency metadata supports bare syntax (CUR)', () => {
     .currencies.find(({ code }) => code === 'EUR');
   assertApproxEqual(currency.eurRate, 1, 1e-12);
 
-  const marginal = bareCurrencyInterpreter.marginalRate(
-    'BareCurrency',
-    ENABLED_SCHEDULES,
-    'EUR',
-    80
-  );
+  const marginal = bareCurrencyInterpreter
+    .prepare('BareCurrency', ENABLED_SCHEDULES, 'EUR')
+    .marginalRate(80);
   assertApproxEqual(marginal, 0.05, OVERALL_EPSILON);
 });

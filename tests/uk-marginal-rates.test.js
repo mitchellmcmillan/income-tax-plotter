@@ -1,7 +1,6 @@
 import test from 'node:test';
 import {
   assertMarginalRateSamples,
-  assertPreparedMatchesDirect,
   createIncomeTaxInterpreter,
 } from './test-helpers.js';
 
@@ -24,9 +23,7 @@ const SCHEDULE_INCOMES = [
   125_141,
   200_000,
 ];
-const PARITY_INCOMES = [0, 12_570, 12_571, 50_270, 50_271, 100_000, 125_140, 125_141, 200_000];
 const MARGINAL_EPSILON = 1e-5;
-const PARITY_EPSILON = 1e-6;
 
 function expectedMarginalRate(income) {
   // Left-hand derivative semantics at exact thresholds.
@@ -46,17 +43,5 @@ test(`${COUNTRY_LABEL} marginal rates match expected schedule`, () => {
     incomes: SCHEDULE_INCOMES,
     expectedAtIncome: expectedMarginalRate,
     epsilon: MARGINAL_EPSILON,
-  });
-});
-
-test(`${COUNTRY_LABEL} prepared evaluator matches direct API`, () => {
-  assertPreparedMatchesDirect({
-    interpreter,
-    country: COUNTRY,
-    enabledSchedules: ENABLED_SCHEDULES,
-    currency: CURRENCY,
-    incomes: PARITY_INCOMES,
-    marginalEpsilon: MARGINAL_EPSILON,
-    overallEpsilon: PARITY_EPSILON,
   });
 });

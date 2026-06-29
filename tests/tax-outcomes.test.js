@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import TaxSpecInterpreter from '../src/TaxSpecInterpreter.js';
+import TaxSpec from '../src/TaxSpec.js';
 import { assertApproxEqual, createIncomeTaxInterpreter } from './test-helpers.js';
 
 const interpreter = createIncomeTaxInterpreter();
@@ -23,7 +23,7 @@ test('prepared annual evaluation exposes rates, tax paid, and net pay', () => {
 });
 
 test('prepared evaluation exposes semantic breaks in display context', () => {
-  const interpreter = new TaxSpecInterpreter(`
+  const interpreter = new TaxSpec(`
 Testland (EUR) {
   Tax : income_tax = {
     piece {
@@ -40,7 +40,7 @@ Testland (EUR) {
 });
 
 test('dynamic thresholds report incomplete semantic break coverage', () => {
-  const interpreter = new TaxSpecInterpreter(`
+  const interpreter = new TaxSpec(`
 Testland (EUR) {
   Tax : income_tax = { piece { x < x * x: 0; else: x; } };
 }`);
@@ -93,7 +93,7 @@ test('prepared outcomes define non-positive income consistently', () => {
 });
 
 test('prepared accessors reject non-finite outcomes with descriptive errors', () => {
-  const nonFinite = new TaxSpecInterpreter(`
+  const nonFinite = new TaxSpec(`
     Testland (EUR) {
       Broken : income_tax = { x / 0 };
     }

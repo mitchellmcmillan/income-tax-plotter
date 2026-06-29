@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import TaxSpecInterpreter from '../src/TaxSpecInterpreter.js';
+import TaxSpec from '../src/TaxSpec.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,7 +48,7 @@ function createEvaluators(config) {
   const specPath = path.resolve(rootDir, 'income.tax');
   const specification = fs.readFileSync(specPath, 'utf8');
 
-  const interpreter = new TaxSpecInterpreter(specification, DEFAULT_CURRENCY_CONVERSIONS);
+  const interpreter = new TaxSpec(specification, DEFAULT_CURRENCY_CONVERSIONS);
   const prepared = interpreter.prepare(config.country, config.enabledSchedules, config.currency);
   return {
     marginalRate: prepared.marginalRate,

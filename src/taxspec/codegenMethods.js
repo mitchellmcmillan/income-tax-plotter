@@ -22,19 +22,9 @@ const result = (value, derivative = '0', dependencies = new Set()) => ({
 const safeName = (name) => `_${String(name).replace(/[^A-Za-z0-9_$]/g, '_')}`;
 
 class CodegenMethods {
-  _tryBuildPreparedCodegen(prepared) {
-    try {
-      return this._buildPreparedCodegen(prepared);
-    } catch {
-      return null;
-    }
-  }
-
   _buildPreparedCodegen(prepared) {
     const components = [...this._models().values()]
       .flatMap((country) => country.components);
-    if (prepared.activeComponents.length === 0) return null;
-
     const componentIndexes = new Map(
       components.map((component, index) => [this._componentKey(component), index])
     );
@@ -55,9 +45,6 @@ class CodegenMethods {
 
     const source = `"use strict";
 ${definitions}
-const value = [${components.map((_, index) => `v${index}`).join(',')}];
-const marginal = [${components.map((_, index) => `m${index}`).join(',')}];
-const active = ${JSON.stringify(active)};
 const factor = ${sourceRate / targetRate};
 const persistent = runtime.cache(${components.length});
 return {

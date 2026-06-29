@@ -66,5 +66,4 @@ test('interpreter and prepared evaluation hide implementation fields', () => {
 
   assert.equal(interpreter.modelByCountry, undefined);
   assert.equal(interpreter.currencyToEur, undefined);
-  assert.equal(prepared.generatedCode, undefined);
 });

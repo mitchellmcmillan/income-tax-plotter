@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import { performance } from 'node:perf_hooks';
-import TaxSpecInterpreter from '../src/TaxSpecInterpreter.js';
+import TaxSpec from '../src/TaxSpec.js';
 
-const interpreter = new TaxSpecInterpreter(fs.readFileSync('income.tax', 'utf8'));
+const interpreter = new TaxSpec(fs.readFileSync('income.tax', 'utf8'));
 const prepared = interpreter.prepare('UK_ex_Scotland', ['income tax'], 'GBP');
 const durations = [];
 

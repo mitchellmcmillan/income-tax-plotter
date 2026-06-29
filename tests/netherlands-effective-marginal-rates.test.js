@@ -1,7 +1,6 @@
 import test from 'node:test';
 import {
   assertMarginalRateSamples,
-  assertPreparedMatchesDirect,
   createIncomeTaxInterpreter,
 } from './test-helpers.js';
 
@@ -31,9 +30,7 @@ const SCHEDULE_INCOMES = [
   132_921,
   200_000,
 ];
-const PARITY_INCOMES = [0, 11_357, 11_358, 25_845, 25_846, 78_426, 132_920, 200_000];
 const MARGINAL_EPSILON = 1e-5;
-const PARITY_EPSILON = 1e-5;
 
 function expectedMarginalRate(income) {
   if (income <= 11_357) return 0;
@@ -56,17 +53,5 @@ test(`${COUNTRY_LABEL} effective marginal rates match folded base-minus-credit s
     incomes: SCHEDULE_INCOMES,
     expectedAtIncome: expectedMarginalRate,
     epsilon: MARGINAL_EPSILON,
-  });
-});
-
-test(`${COUNTRY_LABEL} prepared evaluator matches direct API`, () => {
-  assertPreparedMatchesDirect({
-    interpreter,
-    country: COUNTRY,
-    enabledSchedules: ENABLED_SCHEDULES,
-    currency: CURRENCY,
-    incomes: PARITY_INCOMES,
-    marginalEpsilon: PARITY_EPSILON,
-    overallEpsilon: PARITY_EPSILON,
   });
 });

@@ -9,7 +9,6 @@ export const FIX_RELATIVE_TOLERANCE = 1e-10;
 export const FIX_ABSOLUTE_TOLERANCE = 1e-8;
 export const FIX_MIN_BOUND = -1e12;
 export const FIX_MAX_BOUND = 1e12;
-export const FIX_NEWTON_MIN_DENOM = 1e-8;
 
 export class CollectingErrorListener extends antlr4.error.ErrorListener {
   constructor() {
@@ -95,11 +94,6 @@ export function derivativeAt(evaluate, x) {
   if (upper <= x) return 0;
   const valueAtUpper = toNumber(evaluate(upper));
   return (valueAtUpper - valueAtX) / (upper - x);
-}
-
-export function maybeFinite(value) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : 0;
 }
 
 export function extractConversionRate(value, currencyCode) {

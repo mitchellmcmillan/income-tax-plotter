@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   assertMarginalRateSamples,
-  assertPreparedMatchesDirect,
   createIncomeTaxInterpreter,
 } from './test-helpers.js';
 
@@ -28,9 +27,7 @@ const SCHEDULE_INCOMES = [
   190_100,
   200_000,
 ];
-const PARITY_INCOMES = [0, 18_200, 18_201, 45_000, 90_000, 135_000, 190_000, 200_000];
 const MARGINAL_EPSILON = 1e-5;
-const PARITY_EPSILON = 1e-6;
 const SWEEP_START = 0;
 const SWEEP_END = 200_000;
 const SWEEP_STEP = 1_000;
@@ -59,8 +56,10 @@ test(`${COUNTRY_LABEL} no-loan marginal rates match expected schedule`, () => {
 
 test(`${COUNTRY_LABEL} loan repayment increases marginal rate when enabled`, () => {
   const income = 100_000;
-  const noLoanRate = interpreter.marginalRate(COUNTRY, NO_HECS_SCHEDULES, CURRENCY, income);
-  const withLoanRate = interpreter.marginalRate(COUNTRY, WITH_HECS_SCHEDULES, CURRENCY, income);
+  const noLoanRate = interpreter.prepare(COUNTRY, NO_HECS_SCHEDULES, CURRENCY).marginalRate(income);
+  const withLoanRate = interpreter
+    .prepare(COUNTRY, WITH_HECS_SCHEDULES, CURRENCY)
+    .marginalRate(income);
 
   assert.ok(
     withLoanRate > noLoanRate,
@@ -69,23 +68,12 @@ test(`${COUNTRY_LABEL} loan repayment increases marginal rate when enabled`, () 
 });
 
 test(`${COUNTRY_LABEL} no-loan marginal-rate sweep is finite`, () => {
+  const prepared = interpreter.prepare(COUNTRY, NO_HECS_SCHEDULES, CURRENCY);
   for (let income = SWEEP_START; income <= SWEEP_END; income += SWEEP_STEP) {
-    const marginalRate = interpreter.marginalRate(COUNTRY, NO_HECS_SCHEDULES, CURRENCY, income);
+    const marginalRate = prepared.marginalRate(income);
     assert.ok(
       Number.isFinite(marginalRate),
       `Expected finite marginal rate at income ${income}, got ${marginalRate}`
     );
   }
-});
-
-test(`${COUNTRY_LABEL} prepared evaluator matches direct API`, () => {
-  assertPreparedMatchesDirect({
-    interpreter,
-    country: COUNTRY,
-    enabledSchedules: NO_HECS_SCHEDULES,
-    currency: CURRENCY,
-    incomes: PARITY_INCOMES,
-    marginalEpsilon: PARITY_EPSILON,
-    overallEpsilon: PARITY_EPSILON,
-  });
 });

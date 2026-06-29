@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Coordinates, Line, Mafs, Plot } from 'mafs';
 import Editor from '@monaco-editor/react';
 import taxSpecification from '../income.tax?raw';
-import TaxSpecInterpreter from './TaxSpecInterpreter.js';
+import TaxSpec from './TaxSpec.js';
 import { createPlotPlanner } from './plotPlanning.js';
 import { createUrlPlotState } from './urlPlotState.js';
 import githubMark from './assets/github-mark.svg';
@@ -87,7 +87,7 @@ function createCompactNumberLabelFormatter() {
   };
 }
 
-const TAX_INTERPRETER = new TaxSpecInterpreter(taxSpecification);
+const TAX_INTERPRETER = new TaxSpec(taxSpecification);
 const TAX_CATALOGUE = TAX_INTERPRETER.getCatalogue();
 const INITIAL_PLOT_PLANNER = createPlotPlanner(TAX_INTERPRETER);
 const INITIAL_PLOT_CATALOGUE = INITIAL_PLOT_PLANNER.getCatalogue();
@@ -374,7 +374,7 @@ function App() {
 
   useEffect(() => {
     try {
-      const nextInterpreter = new TaxSpecInterpreter(taxSpecificationInput, CURRENCY_TO_EUR_RATES);
+      const nextInterpreter = new TaxSpec(taxSpecificationInput, CURRENCY_TO_EUR_RATES);
       setPlotPlanner(createPlotPlanner(nextInterpreter));
       setTaxSpecificationError('');
     } catch (error) {

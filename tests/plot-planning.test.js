@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import TaxSpecInterpreter from '../src/TaxSpecInterpreter.js';
+import TaxSpec from '../src/TaxSpec.js';
 import { createPlotPlanner } from '../src/plotPlanning.js';
 
 const taxSpec = `
@@ -19,7 +19,7 @@ const input = {
 };
 
 test('planner prepares TaxSpec countries and exposes immutable plotting catalogue', () => {
-  const planner = createPlotPlanner(new TaxSpecInterpreter(taxSpec));
+  const planner = createPlotPlanner(new TaxSpec(taxSpec));
   const catalogue = planner.getCatalogue();
 
   assert.deepEqual(catalogue.countries, [{
@@ -38,7 +38,7 @@ test('planner prepares TaxSpec countries and exposes immutable plotting catalogu
 });
 
 test('all rate modes return renderer-neutral TaxSpec outcomes and styles', () => {
-  const planner = createPlotPlanner(new TaxSpecInterpreter(taxSpec));
+  const planner = createPlotPlanner(new TaxSpec(taxSpec));
   const expectedAt50 = {
     marginal: 30,
     cumulative: 30,
@@ -68,7 +68,7 @@ test('all rate modes return renderer-neutral TaxSpec outcomes and styles', () =>
 });
 
 test('display currency and pay period conversion preserve annual outcomes', () => {
-  const planner = createPlotPlanner(new TaxSpecInterpreter(taxSpec, { USD: 0.8 }));
+  const planner = createPlotPlanner(new TaxSpec(taxSpec, { USD: 0.8 }));
   const annual = planner.plan({ ...input, rateType: 'tax-paid' });
   const monthlyUsd = planner.plan({
     ...input,
@@ -82,7 +82,7 @@ test('display currency and pay period conversion preserve annual outcomes', () =
 });
 
 test('domain and mode changes reuse prepared accessors', () => {
-  const planner = createPlotPlanner(new TaxSpecInterpreter(taxSpec));
+  const planner = createPlotPlanner(new TaxSpec(taxSpec));
   const first = planner.plan({ ...input, rateType: 'marginal' });
   const second = planner.plan({
     ...input,
@@ -97,7 +97,7 @@ test('domain and mode changes reuse prepared accessors', () => {
 });
 
 test('unknown or unpreparable countries produce no series', () => {
-  const planner = createPlotPlanner(new TaxSpecInterpreter(taxSpec));
+  const planner = createPlotPlanner(new TaxSpec(taxSpec));
   assert.deepEqual(
     planner.plan({ ...input, countries: ['Missing'], rateType: 'marginal' }),
     { series: [], bounds: null }

@@ -5,18 +5,16 @@ import {
   CollectingErrorListener,
   ensureArray,
   extractConversionRate,
-  maybeFinite,
   normalizeCurrency,
   normalizeEnabledScheduleToken,
   normalizeIdentifier,
 } from './taxspec/shared.js';
 import { analyzePlotBreaks, lowerTaxSpec } from './taxspec/lowerTaxSpec.js';
-import { installEvaluationMethods } from './taxspec/evaluationMethods.js';
 import { installCodegenMethods } from './taxspec/codegenMethods.js';
 
 const INTERNALS = new WeakMap();
 
-export default class TaxSpecInterpreter {
+export default class TaxSpec {
   constructor(taxSpecification, currencyConversions = {}) {
     if (typeof taxSpecification !== 'string' || taxSpecification.trim() === '') {
       throw new Error('taxSpecification must be a non-empty string.');
@@ -37,25 +35,17 @@ export default class TaxSpecInterpreter {
     return INTERNALS.get(this).catalogue;
   }
 
-  marginalRate(country, enabledSchedules, currency, grossIncome) {
-    const prepared = this._prepareEvaluation(country, enabledSchedules, currency);
-    return this._evaluateMarginalFromPrepared(prepared, grossIncome);
-  }
-
-  overallRate(country, enabledSchedules, currency, grossIncome) {
-    const prepared = this._prepareEvaluation(country, enabledSchedules, currency);
-    return this._evaluateOverallFromPrepared(prepared, grossIncome);
-  }
-
   prepare(country, enabledSchedules, currency, periodsPerYear = 1) {
     const prepared = this._prepareEvaluation(country, enabledSchedules, currency);
-    const generated = this._tryBuildPreparedCodegen(prepared);
-    const evaluateMarginalRate = generated
-      ? generated.marginalRate
-      : (grossIncome) => this._evaluateMarginalFromPrepared(prepared, grossIncome, true);
-    const evaluateOverallRate = generated
-      ? generated.overallRate
-      : (grossIncome) => this._evaluateOverallFromPrepared(prepared, grossIncome, true);
+    let generated;
+    try {
+      generated = this._buildPreparedCodegen(prepared);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to compile TaxSpec for ${prepared.countryModel.countryName}: ${message}`);
+    }
+    const evaluateMarginalRate = generated.marginalRate;
+    const evaluateOverallRate = generated.overallRate;
     const finite = (name, income, outcome) => {
       if (!Number.isFinite(outcome)) {
         throw new Error(
@@ -229,67 +219,6 @@ export default class TaxSpecInterpreter {
     return prepared;
   }
 
-  _evaluateMarginalFromPrepared(prepared, grossIncome, preserveNonFinite = false) {
-    const baseState = this._createBaseStateFromPrepared(prepared, grossIncome);
-    if (baseState.localIncome < 0) return 0;
-
-    let totalMarginalRate = 0;
-    for (const component of prepared.activeComponents) {
-      totalMarginalRate += this._evaluateComponentMarginal(component, baseState);
-    }
-    return preserveNonFinite ? Number(totalMarginalRate) : maybeFinite(totalMarginalRate);
-  }
-
-  _evaluateOverallFromPrepared(prepared, grossIncome, preserveNonFinite = false) {
-    const baseState = this._createBaseStateFromPrepared(prepared, grossIncome);
-    if (baseState.localIncome <= 0) return 0;
-
-    let totalTax = 0;
-    for (const component of prepared.activeComponents) {
-      totalTax += this._evaluateComponentTotal(component, baseState);
-    }
-    const overallRate = totalTax / baseState.localIncome;
-    return preserveNonFinite ? Number(overallRate) : maybeFinite(overallRate);
-  }
-
-  _createBaseStateFromPrepared(prepared, grossIncome) {
-    const numericIncome = Number(grossIncome);
-    if (!Number.isFinite(numericIncome)) throw new Error('grossIncome must be numeric.');
-
-    const localIncome = this._convertIncomeToCountry(
-      numericIncome,
-      prepared.sourceCurrency,
-      prepared.countryModel.currencyKey
-    );
-
-    return {
-      prepared,
-      countryModel: prepared.countryModel,
-      enabledSet: prepared.enabledSet,
-      localIncome,
-      scope: this._createIncomeScope(localIncome),
-      callStack: new Set(),
-      memo: new Map(),
-    };
-  }
-
-  _createIncomeScope(localIncome) {
-    const scope = Object.create(null);
-    scope.x = localIncome;
-    return scope;
-  }
-
-  _convertIncomeToCountry(amount, sourceCurrency, targetCurrency) {
-    if (sourceCurrency === targetCurrency) return amount;
-
-    const sourceRate = this._currencies().get(sourceCurrency);
-    const targetRate = this._currencies().get(targetCurrency);
-    if (!sourceRate || !targetRate) {
-      throw new Error(`Missing currency conversion for ${sourceCurrency} -> ${targetCurrency}`);
-    }
-    return (amount * sourceRate) / targetRate;
-  }
-
   _models() {
     return INTERNALS.get(this).models;
   }
@@ -341,5 +270,4 @@ export default class TaxSpecInterpreter {
 
 }
 
-installEvaluationMethods(TaxSpecInterpreter);
-installCodegenMethods(TaxSpecInterpreter);
+installCodegenMethods(TaxSpec);

@@ -1,9 +1,9 @@
 import { performance } from 'node:perf_hooks';
-import TaxSpecInterpreter from '../src/TaxSpecInterpreter.js';
+import TaxSpec from '../src/TaxSpec.js';
 import { createPlotPlanner } from '../src/plotPlanning.js';
 
 const countries = Array.from({ length: 8 }, (_, index) => `Country_${index}`);
-const interpreter = new TaxSpecInterpreter(countries.map((country) => `
+const interpreter = new TaxSpec(countries.map((country) => `
 ${country} (EUR) {
   Income : income_tax = { brackets(x; [0..50000]: 0.2; [50000..inf]: 0.4;) };
 }`).join('\n'));

@@ -1,7 +1,6 @@
 import test from 'node:test';
 import {
   assertMarginalRateSamples,
-  assertPreparedMatchesDirect,
   createIncomeTaxInterpreter,
 } from './test-helpers.js';
 
@@ -31,10 +30,8 @@ const SCHEDULE_INCOMES = [
   2_817_900, 2_817_970,   // around K_TOPTOT
 ];
 
-const PARITY_INCOMES = [0, 58_900, 700_000, 900_000, 2_900_000];
 
 const MARGINAL_EPSILON = 1e-5;
-const PARITY_EPSILON = 1e-6;
 
 // DSL constants from your Denmark model:
 const DK_KOMMUNE_RATE = 0.254276;
@@ -66,17 +63,5 @@ test(`${COUNTRY_LABEL} marginal rates match DSL-based schedule`, () => {
     incomes: SCHEDULE_INCOMES,
     expectedAtIncome: expectedMarginalRate,
     epsilon: MARGINAL_EPSILON,
-  });
-});
-
-test(`${COUNTRY_LABEL} prepared evaluator matches direct API`, () => {
-  assertPreparedMatchesDirect({
-    interpreter,
-    country: COUNTRY,
-    enabledSchedules: ENABLED_SCHEDULES,
-    currency: CURRENCY,
-    incomes: PARITY_INCOMES,
-    marginalEpsilon: PARITY_EPSILON,
-    overallEpsilon: PARITY_EPSILON,
   });
 });
