@@ -9,6 +9,46 @@ const CACHE_LOOKAHEAD = 0.5;
 const AUTOSCALE_SAMPLES = 160;
 const AUTOSCALE_MIN_SAMPLES = 96;
 const AUTOSCALE_MAX_SAMPLES = 2048;
+const RATE_PERCENT_SCALE = 100;
+const COUNTRY_COLORS = [
+  '#0f766e', '#1d4ed8', '#d97706', '#a21caf', '#dc2626', '#0369a1',
+  '#15803d', '#e11d48', '#7c3aed', '#0891b2', '#65a30d', '#ea580c',
+  '#f59e0b', '#14b8a6', '#8b5cf6', '#f43f5e', '#84cc16',
+];
+const SCHEDULE_LABELS = {
+  income_tax: 'Income tax',
+  social_security: 'Social security',
+  loan_repayment: 'Tertiary education loan',
+  religious: 'Religious tax',
+};
+
+function scheduleLabel(kind) {
+  const normalized = String(kind).normalize('NFKC').trim().toLowerCase();
+  return SCHEDULE_LABELS[normalized] || normalized
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function plottingCatalogue(interpreter) {
+  const source = interpreter.getCatalogue();
+  const countries = [...source.countries]
+    .sort((left, right) => left.label.localeCompare(right.label))
+    .map((country, index) => Object.freeze({
+      id: country.id,
+      label: country.label,
+      currency: country.currency,
+      color: COUNTRY_COLORS[index % COUNTRY_COLORS.length],
+      schedules: Object.freeze(country.scheduleKinds.map((id) =>
+        Object.freeze({ id, label: scheduleLabel(id) })
+      )),
+    }));
+  return Object.freeze({
+    countries: Object.freeze(countries),
+    currencies: source.currencies,
+  });
+}
 
 function seriesForMode(rateType, countryLines) {
   if (rateType === 'marginal-overall') {
@@ -199,17 +239,92 @@ function retainActive(cache, descriptors) {
   }
 }
 
-export function createPlotPlanner() {
+export function createPlotPlanner(interpreter) {
   const autoscaleCache = new Map();
   const jumpCache = new Map();
+  const preparedCache = new Map();
+  const catalogue = plottingCatalogue(interpreter);
+  const sourceCatalogue = interpreter.getCatalogue();
+  const countriesById = new Map(catalogue.countries.map((country) => [country.id, country]));
+  const sourceCountriesById = new Map(
+    sourceCatalogue.countries.map((country) => [country.id, country])
+  );
+  const currenciesToEur = new Map(
+    sourceCatalogue.currencies.map(({ code, eurRate }) => [code, eurRate])
+  );
+
+  function countryLines({
+    countries,
+    enabledSchedules,
+    displayCurrency,
+    periodsPerYear,
+  }) {
+    return countries.flatMap((countryId) => {
+      const country = countriesById.get(countryId);
+      if (!country) return [];
+      const activeSchedules = country.schedules
+        .filter(({ label }) => Boolean(enabledSchedules[label]))
+        .map(({ id }) => id);
+      if (activeSchedules.length === 0) return [];
+
+      const cacheKey = JSON.stringify([
+        country.id,
+        activeSchedules,
+        displayCurrency,
+        periodsPerYear,
+      ]);
+      let line = preparedCache.get(cacheKey);
+      if (line) return [line];
+
+      try {
+        const prepared = interpreter.prepare(
+          country.id,
+          activeSchedules,
+          displayCurrency,
+          periodsPerYear
+        );
+        const sourceCountry = sourceCountriesById.get(country.id);
+        const countryRate = currenciesToEur.get(sourceCountry.currency) ?? 1;
+        const displayRate = currenciesToEur.get(displayCurrency) ?? 1;
+        const forcedBreaks = [...new Set(sourceCountry.plotBreaks
+          .map((value) => (value * countryRate) / (displayRate * periodsPerYear))
+          .filter((value) => Number.isFinite(value) && value >= 0)
+          .map((value) => Number(value.toFixed(9)))
+        )].sort((left, right) => left - right);
+        const aligned = (accessor, scale = 1) => (income) => {
+          const value = Math.round(Number(income));
+          return Number.isFinite(value) && value >= 0 ? accessor(value) * scale : undefined;
+        };
+        line = {
+          country: country.id,
+          color: country.color,
+          lineBreaksDisplayIncome: forcedBreaks,
+          marginalRateAtDisplayIncome: aligned(prepared.marginalRate, RATE_PERCENT_SCALE),
+          cumulativeRateAtDisplayIncome: aligned(prepared.overallRate, RATE_PERCENT_SCALE),
+          cumulativeTaxPaidAtDisplayIncome: aligned(prepared.taxPaid),
+          netPayAtDisplayIncome: aligned(prepared.netPay),
+        };
+        preparedCache.set(cacheKey, line);
+        return [line];
+      } catch {
+        return [];
+      }
+    });
+  }
 
   return {
-    plan({ rateType, countryLines, domainMin, domainMax }) {
+    getCatalogue() {
+      return catalogue;
+    },
+
+    plan(input) {
+      const { rateType, domainMin, domainMax } = input;
+      const lines = countryLines(input);
       if (!Number.isFinite(domainMin) || !Number.isFinite(domainMax) || domainMax <= domainMin) {
         return { series: [], bounds: null };
       }
 
-      const descriptors = seriesForMode(rateType, countryLines);
+      const descriptors = seriesForMode(rateType, lines);
       retainActive(autoscaleCache, descriptors);
       retainActive(jumpCache, descriptors);
       const span = Math.max(1, domainMax - domainMin);

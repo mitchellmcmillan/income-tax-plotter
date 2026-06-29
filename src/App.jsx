@@ -8,25 +8,6 @@ import { createUrlPlotState } from './urlPlotState.js';
 import githubMark from './assets/github-mark.svg';
 import './App.css';
 
-const COUNTRY_COLORS = [
-  '#0f766e',
-  '#1d4ed8',
-  '#d97706',
-  '#a21caf',
-  '#dc2626',
-  '#0369a1',
-  '#15803d',
-  '#e11d48',
-  '#7c3aed',
-  '#0891b2',
-  '#65a30d',
-  '#ea580c',
-  '#f59e0b',
-  '#14b8a6',
-  '#8b5cf6',
-  '#f43f5e',
-  '#84cc16',
-];
 const DEFAULT_MIN_EUR = 0;
 const DEFAULT_MAX_EUR = 150000;
 const DEFAULT_X_TICK_STEP = 25000;
@@ -52,25 +33,6 @@ const SCHEDULE_PRIORITY = {
   'Tertiary education loan': 2,
   'Religious tax': 3,
 };
-
-const SCHEDULE_KIND_TO_LABEL = {
-  income_tax: 'Income tax',
-  social_security: 'Social security',
-  loan_repayment: 'Tertiary education loan',
-  religious: 'Religious tax',
-};
-
-function scheduleLabelFromKind(kind) {
-  const normalizedKind = String(kind).normalize('NFKC').trim().toLowerCase();
-  const override = SCHEDULE_KIND_TO_LABEL[normalizedKind];
-  if (override) return override;
-
-  return normalizedKind
-    .split('_')
-    .filter(Boolean)
-    .map((segment) => segment[0].toUpperCase() + segment.slice(1))
-    .join(' ');
-}
 
 function createCurrencyLabelFormatter(currencyCode) {
   try {
@@ -127,19 +89,23 @@ function createCompactNumberLabelFormatter() {
 
 const TAX_INTERPRETER = new TaxSpecInterpreter(taxSpecification);
 const TAX_CATALOGUE = TAX_INTERPRETER.getCatalogue();
+const INITIAL_PLOT_PLANNER = createPlotPlanner(TAX_INTERPRETER);
+const INITIAL_PLOT_CATALOGUE = INITIAL_PLOT_PLANNER.getCatalogue();
 const CURRENCY_TO_EUR_RATES = Object.fromEntries(
   TAX_CATALOGUE.currencies.map(({ code, eurRate }) => [code, eurRate])
 );
-const COUNTRY_LINES = TAX_CATALOGUE.countries.map((countryEntry, index) => ({
-  country: countryEntry.id,
-  countryLabel: countryEntry.label,
-  currency: countryEntry.currency,
-  scheduleKinds: countryEntry.scheduleKinds,
-  color: COUNTRY_COLORS[index % COUNTRY_COLORS.length],
-})).sort((left, right) => left.countryLabel.localeCompare(right.countryLabel));
+const COUNTRY_LINES = INITIAL_PLOT_CATALOGUE.countries.map((country) => ({
+  country: country.id,
+  countryLabel: country.label,
+  currency: country.currency,
+  scheduleKinds: country.schedules.map(({ id }) => id),
+  color: country.color,
+}));
 const COUNTRY_KEYS = COUNTRY_LINES.map((countryLine) => countryLine.country);
 const SCHEDULE_TYPES = [
-  ...new Set(COUNTRY_LINES.flatMap((country) => country.scheduleKinds).map(scheduleLabelFromKind)),
+  ...new Set(INITIAL_PLOT_CATALOGUE.countries.flatMap((country) =>
+    country.schedules.map(({ label }) => label)
+  )),
 ].sort((left, right) => {
   return (SCHEDULE_PRIORITY[left] ?? 99) - (SCHEDULE_PRIORITY[right] ?? 99)
     || left.localeCompare(right);
@@ -272,15 +238,6 @@ function clampInputAtZero(value, fallback) {
   return String(Math.max(0, parsed));
 }
 
-function alignDisplayIncomeToInteger(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return NaN;
-  }
-
-  return Math.round(parsed);
-}
-
 function App() {
   const initialHashState = useMemo(() => URL_PLOT_STATE.parse(), []);
   const [enabledCountries, setEnabledCountries] = useState(initialHashState.enabledCountries);
@@ -291,9 +248,8 @@ function App() {
   const [minKEurInput, setMinKEurInput] = useState(initialHashState.minKEurInput);
   const [maxKEurInput, setMaxKEurInput] = useState(initialHashState.maxKEurInput);
   const [taxSpecificationInput, setTaxSpecificationInput] = useState(taxSpecification);
-  const [runtimeInterpreter, setRuntimeInterpreter] = useState(() => TAX_INTERPRETER);
+  const [plotPlanner, setPlotPlanner] = useState(() => INITIAL_PLOT_PLANNER);
   const [taxSpecificationError, setTaxSpecificationError] = useState('');
-  const plotPlanner = useMemo(() => createPlotPlanner(), []);
   const editorOptions = useMemo(
     () => ({
       automaticLayout: true,
@@ -419,155 +375,54 @@ function App() {
   useEffect(() => {
     try {
       const nextInterpreter = new TaxSpecInterpreter(taxSpecificationInput, CURRENCY_TO_EUR_RATES);
-      setRuntimeInterpreter(nextInterpreter);
+      setPlotPlanner(createPlotPlanner(nextInterpreter));
       setTaxSpecificationError('');
     } catch (error) {
       setTaxSpecificationError(error instanceof Error ? error.message : String(error));
     }
   }, [taxSpecificationInput]);
 
-  const allCountryLines = useMemo(() => COUNTRY_LINES, []);
-
-  const visibleCountryLines = useMemo(
-    () =>
-      allCountryLines
-        .filter((countryLine) => Boolean(enabledCountries[countryLine.country]))
-        .map((countryLine) => {
-          const activeScheduleKinds = countryLine.scheduleKinds.filter((scheduleKind) =>
-            Boolean(enabledSchedules[scheduleLabelFromKind(scheduleKind)])
-          );
-          let preparedEvaluator = null;
-          if (activeScheduleKinds.length > 0) {
-            try {
-              preparedEvaluator = runtimeInterpreter.prepare(
-                countryLine.country,
-                activeScheduleKinds,
-                displayCurrency,
-                periodsPerYear
-              );
-            } catch {
-              preparedEvaluator = null;
-            }
-          }
-
-          const runtimeCountry = runtimeInterpreter
-            .getCatalogue()
-            .countries.find(({ id }) => id === countryLine.country);
-          const countryCurrencyToEur =
-            CURRENCY_TO_EUR_RATES[runtimeCountry?.currency ?? countryLine.currency] ?? 1;
-          const rawLineBreaks = runtimeCountry?.plotBreaks ?? [];
-          const lineBreaksDisplayIncome = [...new Set(
-            rawLineBreaks
-              .map(
-                (breakValue) =>
-                  (breakValue * countryCurrencyToEur) /
-                  (displayCurrencyToEur * periodsPerYear)
-              )
-              .filter((breakValue) => Number.isFinite(breakValue) && breakValue >= 0)
-              .map((breakValue) => Number(breakValue.toFixed(9)))
-          )].sort((left, right) => left - right);
-
-          const marginalRateAtDisplayIncome = (grossIncomeDisplayCurrency) => {
-            const alignedIncomeDisplayCurrency =
-              alignDisplayIncomeToInteger(grossIncomeDisplayCurrency);
-            if (
-              !Number.isFinite(alignedIncomeDisplayCurrency) ||
-              alignedIncomeDisplayCurrency < 0 ||
-              !preparedEvaluator
-            ) {
-              return undefined;
-            }
-
-            return preparedEvaluator.marginalRate(alignedIncomeDisplayCurrency) * RATE_PERCENT_SCALE;
-          };
-
-          const cumulativeTaxPaidAtDisplayIncome = (grossIncomeDisplayCurrency) => {
-            const alignedIncomeDisplayCurrency =
-              alignDisplayIncomeToInteger(grossIncomeDisplayCurrency);
-            if (
-              !Number.isFinite(alignedIncomeDisplayCurrency) ||
-              alignedIncomeDisplayCurrency < 0 ||
-              !preparedEvaluator
-            ) {
-              return undefined;
-            }
-
-            return preparedEvaluator.taxPaid(alignedIncomeDisplayCurrency);
-          };
-
-          const netPayAtDisplayIncome = (grossIncomeDisplayCurrency) => {
-            const alignedIncomeDisplayCurrency =
-              alignDisplayIncomeToInteger(grossIncomeDisplayCurrency);
-            if (
-              !Number.isFinite(alignedIncomeDisplayCurrency)
-              || alignedIncomeDisplayCurrency < 0
-              || !preparedEvaluator
-            ) {
-              return undefined;
-            }
-
-            return preparedEvaluator.netPay(alignedIncomeDisplayCurrency);
-          };
-
-          const cumulativeRateAtDisplayIncome = (grossIncomeDisplayCurrency) => {
-            const alignedIncomeDisplayCurrency =
-              alignDisplayIncomeToInteger(grossIncomeDisplayCurrency);
-            if (
-              !Number.isFinite(alignedIncomeDisplayCurrency)
-              || alignedIncomeDisplayCurrency < 0
-              || !preparedEvaluator
-            ) {
-              return undefined;
-            }
-
-            return preparedEvaluator.overallRate(alignedIncomeDisplayCurrency) * RATE_PERCENT_SCALE;
-          };
-
-          return {
-            ...countryLine,
-            activeScheduleKinds,
-            lineBreaksDisplayIncome,
-            marginalRateAtDisplayIncome,
-            cumulativeRateAtDisplayIncome,
-            cumulativeTaxPaidAtDisplayIncome,
-            netPayAtDisplayIncome,
-          };
-        }),
-    [
-      allCountryLines,
-      enabledCountries,
-      enabledSchedules,
-      displayCurrency,
-      periodsPerYear,
-      runtimeInterpreter,
-    ]
+  const plotCatalogue = plotPlanner.getCatalogue();
+  const plotScheduleTypes = [...new Set(plotCatalogue.countries.flatMap((country) =>
+    country.schedules.map(({ label }) => label)
+  ))].sort((left, right) =>
+    (SCHEDULE_PRIORITY[left] ?? 99) - (SCHEDULE_PRIORITY[right] ?? 99)
+      || left.localeCompare(right)
   );
-
-  const plottedCountryLines = useMemo(
-    () => visibleCountryLines.filter((countryLine) => countryLine.activeScheduleKinds.length > 0),
-    [visibleCountryLines]
-  );
-
-  const hasEnabledCountry = visibleCountryLines.length > 0;
-  const hasPlottedLines = plottedCountryLines.length > 0;
+  const plotCurrencies = plotCatalogue.currencies.map(({ code }) => code).sort((left, right) => {
+    if (left === 'EUR') return -1;
+    if (right === 'EUR') return 1;
+    return left.localeCompare(right);
+  });
+  const enabledCountryIds = plotCatalogue.countries
+    .filter(({ id }) => Boolean(enabledCountries[id]))
+    .map(({ id }) => id);
+  const hasEnabledCountry = enabledCountryIds.length > 0;
 
   const xAxisLabel = useMemo(() => createCompactNumberLabelFormatter(), []);
   const plotPlan = useMemo(
     () =>
       plotPlanner.plan({
         rateType,
-        countryLines: plottedCountryLines,
+        countries: enabledCountryIds,
+        enabledSchedules,
+        displayCurrency,
+        periodsPerYear,
         domainMin: renderMinDisplayCurrency,
         domainMax: renderMaxDisplayCurrency,
       }),
     [
       plotPlanner,
-      plottedCountryLines,
+      enabledCountryIds,
+      enabledSchedules,
+      displayCurrency,
+      periodsPerYear,
       rateType,
       renderMinDisplayCurrency,
       renderMaxDisplayCurrency,
     ]
   );
+  const hasPlottedLines = plotPlan.series.length > 0;
 
   const yAxisConfig = useMemo(() => {
     const isAbsoluteMode = rateType === 'tax-paid' || rateType === 'net-pay';
@@ -684,7 +539,7 @@ function App() {
 
         <div className="control-card">
           <h2>Schedules</h2>
-          {SCHEDULE_TYPES.map((scheduleType) => (
+          {plotScheduleTypes.map((scheduleType) => (
             <label key={scheduleType} className="toggle-row">
               <input
                 type="checkbox"
@@ -759,7 +614,7 @@ function App() {
                 value={displayCurrency}
                 onChange={handleDisplayCurrencyChange}
               >
-                {DISPLAY_CURRENCIES.map((currencyCode) => (
+                {plotCurrencies.map((currencyCode) => (
                   <option key={currencyCode} value={currencyCode}>
                     {currencyCode}
                   </option>
@@ -824,32 +679,32 @@ function App() {
 
       <section className="legend-panel">
         <div className="legend-country-list">
-          {COUNTRY_LINES.map((countryLine) => {
-            const isActive = Boolean(enabledCountries[countryLine.country]);
+          {plotCatalogue.countries.map((country) => {
+            const isActive = Boolean(enabledCountries[country.id]);
 
             return (
               <button
                 type="button"
-                key={countryLine.country}
+                key={country.id}
                 className={`legend-item legend-item-button${isActive ? '' : ' legend-item-muted'}`}
                 onClick={() =>
                   setEnabledCountries((previous) => ({
                     ...previous,
-                    [countryLine.country]: !previous[countryLine.country],
+                    [country.id]: !previous[country.id],
                   }))
                 }
                 aria-pressed={isActive}
                 title={
                   isActive
-                    ? `Hide ${countryLine.countryLabel}`
-                    : `Show ${countryLine.countryLabel}`
+                    ? `Hide ${country.label}`
+                    : `Show ${country.label}`
                 }
               >
                 <span
                   className="legend-color"
-                  style={{ backgroundColor: countryLine.color }}
+                  style={{ backgroundColor: country.color }}
                 />
-                {countryLine.countryLabel}
+                {country.label}
               </button>
             );
           })}
@@ -928,11 +783,11 @@ function App() {
         {hasEnabledCountry && !hasPlottedLines && (
           <p className="validation-error">Enable at least one schedule.</p>
         )}
-        {allCountryLines
-          .filter((countryLine) => countryLine.scheduleKinds.length === 0)
-          .map((countryLine) => (
-            <p key={countryLine.country} className="validation-error">
-              No {countryLine.countryLabel} schedule found in `income.tax`.
+        {plotCatalogue.countries
+          .filter((country) => country.schedules.length === 0)
+          .map((country) => (
+            <p key={country.id} className="validation-error">
+              No {country.label} schedule found in `income.tax`.
             </p>
           ))}
       </section>

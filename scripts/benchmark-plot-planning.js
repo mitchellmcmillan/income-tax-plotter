@@ -1,26 +1,29 @@
 import { performance } from 'node:perf_hooks';
+import TaxSpecInterpreter from '../src/TaxSpecInterpreter.js';
 import { createPlotPlanner } from '../src/plotPlanning.js';
 
-const countryLines = Array.from({ length: 8 }, (_, index) => ({
-  country: `Country-${index}`,
-  color: '#000',
-  lineBreaksDisplayIncome: [12570, 50270, 125140],
-  marginalRateAtDisplayIncome: (income) => (Math.round(income) < 50000 ? 20 : 40),
-  cumulativeRateAtDisplayIncome: (income) => 20 + Math.min(20, income / 5000),
-  cumulativeTaxPaidAtDisplayIncome: (income) => income * 0.3,
-  netPayAtDisplayIncome: (income) => income * 0.7,
-}));
+const countries = Array.from({ length: 8 }, (_, index) => `Country_${index}`);
+const interpreter = new TaxSpecInterpreter(countries.map((country) => `
+${country} (EUR) {
+  Income : income_tax = { brackets(x; [0..50000]: 0.2; [50000..inf]: 0.4;) };
+}`).join('\n'));
+const planInput = {
+  countries,
+  enabledSchedules: { 'Income tax': true },
+  displayCurrency: 'EUR',
+  periodsPerYear: 1,
+  rateType: 'marginal-overall',
+};
 
 function median(values) {
   return [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 }
 
 function runBatch() {
-  const planner = createPlotPlanner();
+  const planner = createPlotPlanner(interpreter);
   const start = performance.now();
   planner.plan({
-    rateType: 'marginal-overall',
-    countryLines,
+    ...planInput,
     domainMin: 0,
     domainMax: 150000,
   });
@@ -29,8 +32,7 @@ function runBatch() {
   const panStart = performance.now();
   for (let offset = 1000; offset <= 10000; offset += 1000) {
     planner.plan({
-      rateType: 'marginal-overall',
-      countryLines,
+      ...planInput,
       domainMin: offset,
       domainMax: 150000 + offset,
     });

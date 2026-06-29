@@ -1,61 +1,60 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import TaxSpecInterpreter from '../src/TaxSpecInterpreter.js';
 import { createPlotPlanner } from '../src/plotPlanning.js';
 
-const line = {
-  country: 'Testland',
-  color: '#123456',
-  lineBreaksDisplayIncome: [],
-  marginalRateAtDisplayIncome: (income) => income / 100,
-  cumulativeRateAtDisplayIncome: (income) => income / 200,
-  cumulativeTaxPaidAtDisplayIncome: (income) => income * 0.2,
-  netPayAtDisplayIncome: (income) => income * 0.8,
+const taxSpec = `
+Testland (EUR) {
+  Income : income_tax = { brackets(x; [0..100]: 0.2; [100..inf]: 0.4;) };
+  Levy : social_security = { 0.1 * x };
+}`;
+
+const input = {
+  countries: ['Testland'],
+  enabledSchedules: { 'Income tax': true, 'Social security': true },
+  displayCurrency: 'EUR',
+  periodsPerYear: 1,
+  domainMin: 0,
+  domainMax: 200,
 };
 
-test('marginal mode plans one renderer-neutral series', () => {
-  const plan = createPlotPlanner().plan({
-    rateType: 'marginal',
-    countryLines: [line],
-    domainMin: 0,
-    domainMax: 100,
-  });
+test('planner prepares TaxSpec countries and exposes immutable plotting catalogue', () => {
+  const planner = createPlotPlanner(new TaxSpecInterpreter(taxSpec));
+  const catalogue = planner.getCatalogue();
 
-  assert.equal(plan.series.length, 1);
-  assert.equal(plan.series[0].key, 'Testland');
-  assert.equal(plan.series[0].yAccessor, line.marginalRateAtDisplayIncome);
-  assert.deepEqual(plan.series[0].continuousDomains, [[0, 100]]);
-  assert.deepEqual(plan.series[0].jumps, []);
-  assert.deepEqual(plan.series[0].style, { color: '#123456', dashed: false });
-  assert.deepEqual(plan.bounds, { minValue: 0, maxValue: 1 });
+  assert.deepEqual(catalogue.countries, [{
+    id: 'Testland',
+    label: 'Testland',
+    currency: 'EUR',
+    schedules: [
+      { id: 'income_tax', label: 'Income tax' },
+      { id: 'social_security', label: 'Social security' },
+    ],
+    color: '#0f766e',
+  }]);
+  assert.ok(Object.isFrozen(catalogue));
+  assert.ok(Object.isFrozen(catalogue.countries));
+  assert.ok(Object.isFrozen(catalogue.countries[0].schedules));
 });
 
-test('all rate modes select expected accessors and styles', () => {
-  const planner = createPlotPlanner();
-  const cases = [
-    ['marginal', line.marginalRateAtDisplayIncome],
-    ['cumulative', line.cumulativeRateAtDisplayIncome],
-    ['tax-paid', line.cumulativeTaxPaidAtDisplayIncome],
-    ['net-pay', line.netPayAtDisplayIncome],
-  ];
+test('all rate modes return renderer-neutral TaxSpec outcomes and styles', () => {
+  const planner = createPlotPlanner(new TaxSpecInterpreter(taxSpec));
+  const expectedAt50 = {
+    marginal: 30,
+    cumulative: 30,
+    'tax-paid': 15,
+    'net-pay': 35,
+  };
 
-  for (const [rateType, accessor] of cases) {
-    const { series } = planner.plan({
-      rateType,
-      countryLines: [line],
-      domainMin: 0,
-      domainMax: 100,
-    });
+  for (const [rateType, expected] of Object.entries(expectedAt50)) {
+    const { series } = planner.plan({ ...input, rateType });
     assert.equal(series.length, 1);
-    assert.equal(series[0].yAccessor, accessor);
-    assert.equal(series[0].style.dashed, false);
+    assert.equal(series[0].key, 'Testland');
+    assert.ok(Math.abs(series[0].yAccessor(50) - expected) < 1e-9);
+    assert.deepEqual(series[0].style, { color: '#0f766e', dashed: false });
   }
 
-  const combined = planner.plan({
-    rateType: 'marginal-overall',
-    countryLines: [line],
-    domainMin: 0,
-    domainMax: 100,
-  });
+  const combined = planner.plan({ ...input, rateType: 'marginal-overall' });
   assert.deepEqual(combined.series.map(({ key }) => key), [
     'Testland-overall',
     'Testland-marginal',
@@ -63,48 +62,39 @@ test('all rate modes select expected accessors and styles', () => {
   assert.deepEqual(combined.series.map(({ style }) => style.dashed), [false, true]);
 });
 
-test('forced breaks and detected jumps split continuous domains', () => {
-  const discontinuous = {
-    ...line,
-    lineBreaksDisplayIncome: [25],
-    marginalRateAtDisplayIncome: (income) => (Math.round(income) < 50 ? 0 : 100),
-  };
-  const { series } = createPlotPlanner().plan({
-    rateType: 'marginal',
-    countryLines: [discontinuous],
-    domainMin: 0,
-    domainMax: 100,
+test('display currency and pay period conversion preserve annual outcomes', () => {
+  const planner = createPlotPlanner(new TaxSpecInterpreter(taxSpec, { USD: 0.8 }));
+  const annual = planner.plan({ ...input, rateType: 'tax-paid' });
+  const monthlyUsd = planner.plan({
+    ...input,
+    rateType: 'tax-paid',
+    displayCurrency: 'USD',
+    periodsPerYear: 12,
   });
 
-  assert.deepEqual(series[0].jumps, [{ x: 49.5, y1: 0, y2: 100 }]);
-  assert.deepEqual(series[0].continuousDomains, [
-    [0, 25],
-    [25, 49.499],
-    [49.501, 100],
-  ]);
+  assert.equal(annual.series[0].yAccessor(120), 40);
+  assert.ok(Math.abs(monthlyUsd.series[0].yAccessor(12) - (47 / 12)) < 1e-9);
 });
 
-test('overlapping pans reuse cached samples and return equivalent results', () => {
-  let calls = 0;
-  const cachedLine = {
-    ...line,
-    marginalRateAtDisplayIncome: (income) => {
-      calls += 1;
-      return income / 100;
-    },
-  };
-  const planner = createPlotPlanner();
-  const input = {
+test('domain and mode changes reuse prepared accessors', () => {
+  const planner = createPlotPlanner(new TaxSpecInterpreter(taxSpec));
+  const first = planner.plan({ ...input, rateType: 'marginal' });
+  const second = planner.plan({
+    ...input,
     rateType: 'marginal',
-    countryLines: [cachedLine],
     domainMin: 10,
-    domainMax: 90,
-  };
+    domainMax: 190,
+  });
+  const combined = planner.plan({ ...input, rateType: 'marginal-overall' });
 
-  const first = planner.plan(input);
-  const callsAfterFirstPlan = calls;
-  const second = planner.plan(input);
+  assert.equal(second.series[0].yAccessor, first.series[0].yAccessor);
+  assert.equal(combined.series[1].yAccessor, first.series[0].yAccessor);
+});
 
-  assert.deepEqual(second, first);
-  assert.equal(calls, callsAfterFirstPlan);
+test('unknown or unpreparable countries produce no series', () => {
+  const planner = createPlotPlanner(new TaxSpecInterpreter(taxSpec));
+  assert.deepEqual(
+    planner.plan({ ...input, countries: ['Missing'], rateType: 'marginal' }),
+    { series: [], bounds: null }
+  );
 });
