@@ -57,12 +57,14 @@ function seriesForMode(rateType, countryLines) {
         key: `${line.country}-overall`,
         yAccessor: line.cumulativeRateAtDisplayIncome,
         forcedBreaks: line.lineBreaksDisplayIncome,
+        breakCoverageComplete: line.breakCoverageComplete,
         style: { color: line.color, dashed: false },
       },
       {
         key: `${line.country}-marginal`,
         yAccessor: line.marginalRateAtDisplayIncome,
         forcedBreaks: line.lineBreaksDisplayIncome,
+        breakCoverageComplete: line.breakCoverageComplete,
         style: { color: line.color, dashed: true },
       },
     ]);
@@ -79,6 +81,7 @@ function seriesForMode(rateType, countryLines) {
     key: line.country,
     yAccessor: line[accessor],
     forcedBreaks: line.lineBreaksDisplayIncome,
+    breakCoverageComplete: line.breakCoverageComplete,
     style: { color: line.color, dashed: false },
   }));
 }
@@ -232,6 +235,35 @@ function detectJumps(yAccessor, domainMin, domainMax) {
   return jumps.filter((jump, index) => index === 0 || Math.abs(jump.x - jumps[index - 1].x) > 1e-6);
 }
 
+function detectCandidateJumps(yAccessor, candidates, domainMin, domainMax) {
+  const jumps = [];
+  for (const candidate of candidates) {
+    if (candidate <= domainMin || candidate >= domainMax) continue;
+    const boundary = Math.round(candidate);
+    const values = [
+      { income: boundary - 1, value: yAccessor(boundary - 1) },
+      { income: boundary, value: yAccessor(boundary) },
+      { income: boundary + 1, value: yAccessor(boundary + 1) },
+    ];
+    const pairs = [[values[0], values[1]], [values[1], values[2]]]
+      .filter(([left, right]) => Number.isFinite(left.value) && Number.isFinite(right.value))
+      .map(([left, right]) => ({
+        left,
+        right,
+        delta: Math.abs(right.value - left.value),
+      }))
+      .sort((left, right) => right.delta - left.delta);
+    if (!pairs[0] || pairs[0].delta <= ABSOLUTE_JUMP_FLOOR) continue;
+    const { left, right } = pairs[0];
+    jumps.push({
+      x: (left.income + right.income) / 2,
+      y1: Math.min(left.value, right.value),
+      y2: Math.max(left.value, right.value),
+    });
+  }
+  return jumps;
+}
+
 function retainActive(cache, descriptors) {
   const active = new Set(descriptors.map(({ key }) => key));
   for (const key of cache.keys()) {
@@ -244,14 +276,7 @@ export function createPlotPlanner(interpreter) {
   const jumpCache = new Map();
   const preparedCache = new Map();
   const catalogue = plottingCatalogue(interpreter);
-  const sourceCatalogue = interpreter.getCatalogue();
   const countriesById = new Map(catalogue.countries.map((country) => [country.id, country]));
-  const sourceCountriesById = new Map(
-    sourceCatalogue.countries.map((country) => [country.id, country])
-  );
-  const currenciesToEur = new Map(
-    sourceCatalogue.currencies.map(({ code, eurRate }) => [code, eurRate])
-  );
 
   function countryLines({
     countries,
@@ -283,14 +308,6 @@ export function createPlotPlanner(interpreter) {
           displayCurrency,
           periodsPerYear
         );
-        const sourceCountry = sourceCountriesById.get(country.id);
-        const countryRate = currenciesToEur.get(sourceCountry.currency) ?? 1;
-        const displayRate = currenciesToEur.get(displayCurrency) ?? 1;
-        const forcedBreaks = [...new Set(sourceCountry.plotBreaks
-          .map((value) => (value * countryRate) / (displayRate * periodsPerYear))
-          .filter((value) => Number.isFinite(value) && value >= 0)
-          .map((value) => Number(value.toFixed(9)))
-        )].sort((left, right) => left - right);
         const aligned = (accessor, scale = 1) => (income) => {
           const value = Math.round(Number(income));
           return Number.isFinite(value) && value >= 0 ? accessor(value) * scale : undefined;
@@ -298,7 +315,8 @@ export function createPlotPlanner(interpreter) {
         line = {
           country: country.id,
           color: country.color,
-          lineBreaksDisplayIncome: forcedBreaks,
+          lineBreaksDisplayIncome: prepared.plotBreaks,
+          breakCoverageComplete: prepared.plotBreakCoverageComplete,
           marginalRateAtDisplayIncome: aligned(prepared.marginalRate, RATE_PERCENT_SCALE),
           cumulativeRateAtDisplayIncome: aligned(prepared.overallRate, RATE_PERCENT_SCALE),
           cumulativeTaxPaidAtDisplayIncome: aligned(prepared.taxPaid),
@@ -361,22 +379,34 @@ export function createPlotPlanner(interpreter) {
           maxValue = Math.max(maxValue, bounds.maxValue);
         }
 
-        let jumpEntry = jumpCache.get(descriptor.key);
-        const jumpReusable = jumpEntry?.yAccessor === descriptor.yAccessor;
-        const jumpMin = jumpReusable
-          ? Math.min(jumpEntry.domainMin, jumpPrefetchMin)
-          : jumpPrefetchMin;
-        const jumpMax = jumpReusable ? Math.max(jumpEntry.domainMax, prefetchMax) : prefetchMax;
-        if (!jumpReusable || jumpMin < jumpEntry.domainMin || jumpMax > jumpEntry.domainMax) {
-          jumpEntry = {
-            yAccessor: descriptor.yAccessor,
-            domainMin: jumpMin,
-            domainMax: jumpMax,
-            jumps: detectJumps(descriptor.yAccessor, jumpMin, jumpMax),
-          };
-          jumpCache.set(descriptor.key, jumpEntry);
+        let detectedJumps;
+        if (descriptor.breakCoverageComplete) {
+          jumpCache.delete(descriptor.key);
+          detectedJumps = detectCandidateJumps(
+            descriptor.yAccessor,
+            descriptor.forcedBreaks,
+            jumpPrefetchMin,
+            prefetchMax
+          );
+        } else {
+          let jumpEntry = jumpCache.get(descriptor.key);
+          const jumpReusable = jumpEntry?.yAccessor === descriptor.yAccessor;
+          const jumpMin = jumpReusable
+            ? Math.min(jumpEntry.domainMin, jumpPrefetchMin)
+            : jumpPrefetchMin;
+          const jumpMax = jumpReusable ? Math.max(jumpEntry.domainMax, prefetchMax) : prefetchMax;
+          if (!jumpReusable || jumpMin < jumpEntry.domainMin || jumpMax > jumpEntry.domainMax) {
+            jumpEntry = {
+              yAccessor: descriptor.yAccessor,
+              domainMin: jumpMin,
+              domainMax: jumpMax,
+              jumps: detectJumps(descriptor.yAccessor, jumpMin, jumpMax),
+            };
+            jumpCache.set(descriptor.key, jumpEntry);
+          }
+          detectedJumps = jumpEntry.jumps;
         }
-        const jumps = jumpEntry.jumps.filter(
+        const jumps = detectedJumps.filter(
           (jump) => jump.x > renderDomainMin && jump.x < domainMax
         );
         const continuousDomains = domainsFromJumps(renderDomainMin, domainMax, jumps)

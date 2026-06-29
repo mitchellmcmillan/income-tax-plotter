@@ -22,6 +22,35 @@ test('prepared annual evaluation exposes rates, tax paid, and net pay', () => {
   assertApproxEqual(prepared.netPay(income), income - prepared.taxPaid(income));
 });
 
+test('prepared evaluation exposes semantic breaks in display context', () => {
+  const interpreter = new TaxSpecInterpreter(`
+Testland (EUR) {
+  Tax : income_tax = {
+    piece {
+      x < 12000: 0;
+      else: brackets(x; [0..12000]: 0.2; [12000..inf]: 0.4;);
+    }
+  };
+}`, { USD: 0.8 });
+  const prepared = interpreter.prepare('Testland', ['income_tax'], 'USD', 12);
+
+  assert.deepEqual(prepared.plotBreaks, [1250]);
+  assert.equal(prepared.plotBreakCoverageComplete, true);
+  assert.ok(Object.isFrozen(prepared.plotBreaks));
+});
+
+test('dynamic thresholds report incomplete semantic break coverage', () => {
+  const interpreter = new TaxSpecInterpreter(`
+Testland (EUR) {
+  Tax : income_tax = { piece { x < x * x: 0; else: x; } };
+}`);
+
+  assert.equal(
+    interpreter.prepare('Testland', ['income_tax'], 'EUR').plotBreakCoverageComplete,
+    false
+  );
+});
+
 test('prepared outcomes preserve annual value across pay periods and currencies', () => {
   const annualIncomeGbp = 100_000;
   const gbpToEur = interpreter
@@ -90,5 +119,13 @@ test('prepared outcomes are finite for every country', () => {
         `${country.id} ${accessor}`
       );
     }
+  }
+});
+
+test('every shipped country has complete semantic plot-break coverage', () => {
+  const interpreter = createIncomeTaxInterpreter();
+  for (const country of interpreter.getCatalogue().countries) {
+    const prepared = interpreter.prepare(country.id, null, country.currency);
+    assert.equal(prepared.plotBreakCoverageComplete, true, country.id);
   }
 });

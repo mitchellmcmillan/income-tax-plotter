@@ -52,6 +52,11 @@ test('all rate modes return renderer-neutral TaxSpec outcomes and styles', () =>
     assert.equal(series[0].key, 'Testland');
     assert.ok(Math.abs(series[0].yAccessor(50) - expected) < 1e-9);
     assert.deepEqual(series[0].style, { color: '#0f766e', dashed: false });
+    if (rateType === 'marginal') {
+      assert.equal(series[0].jumps[0].x, 100.5);
+      assert.ok(Math.abs(series[0].jumps[0].y1 - 30) < 1e-9);
+      assert.equal(series[0].jumps[0].y2, 50);
+    }
   }
 
   const combined = planner.plan({ ...input, rateType: 'marginal-overall' });

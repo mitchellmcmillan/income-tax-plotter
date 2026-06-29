@@ -10,7 +10,7 @@ import {
   normalizeEnabledScheduleToken,
   normalizeIdentifier,
 } from './taxspec/shared.js';
-import { lowerTaxSpec } from './taxspec/lowerTaxSpec.js';
+import { analyzePlotBreaks, lowerTaxSpec } from './taxspec/lowerTaxSpec.js';
 import { installEvaluationMethods } from './taxspec/evaluationMethods.js';
 import { installCodegenMethods } from './taxspec/codegenMethods.js';
 
@@ -23,11 +23,13 @@ export default class TaxSpecInterpreter {
     }
 
     const models = lowerTaxSpec(this._parseProgram(taxSpecification));
+    const plotBreaks = analyzePlotBreaks(models);
     const currencies = this._buildCurrencyConversions(currencyConversions, models);
     INTERNALS.set(this, {
       models,
       currencies,
-      catalogue: this._buildCatalogue(models, currencies),
+      plotBreaks,
+      catalogue: this._buildCatalogue(models, currencies, plotBreaks),
     });
   }
 
@@ -78,6 +80,12 @@ export default class TaxSpecInterpreter {
       const income = Number(grossIncome);
       return income <= 0 ? 0 : finite('taxPaid', income, overallRate(income) * income);
     };
+    const breakAnalysis = INTERNALS.get(this).plotBreaks.get(prepared.countryModel.countryKey);
+    const sourceRate = this._currencies().get(prepared.sourceCurrency);
+    const countryRate = this._currencies().get(prepared.countryModel.currencyKey);
+    const plotBreaks = Object.freeze(breakAnalysis.breaks.map((value) =>
+      Number(((value * countryRate) / (sourceRate * periodsPerYear)).toFixed(9))
+    ));
     return {
       marginalRate,
       overallRate,
@@ -86,6 +94,8 @@ export default class TaxSpecInterpreter {
         const income = Number(grossIncome);
         return income <= 0 ? income : finite('netPay', income, income - taxPaid(income));
       },
+      plotBreaks,
+      plotBreakCoverageComplete: breakAnalysis.complete,
     };
   }
 
@@ -159,7 +169,7 @@ export default class TaxSpecInterpreter {
     return conversions;
   }
 
-  _buildCatalogue(models, currencyConversions) {
+  _buildCatalogue(models, currencyConversions, plotBreakAnalysis) {
     const countries = [...models.values()].map((country) =>
       Object.freeze({
         id: country.countryName,
@@ -172,7 +182,7 @@ export default class TaxSpecInterpreter {
               .filter((kind) => kind !== '_')
           ),
         ]),
-        plotBreaks: Object.freeze([...country.numericLiterals]),
+        plotBreaks: plotBreakAnalysis.get(country.countryKey).breaks,
       })
     );
     const currencies = [...currencyConversions].map(([code, eurRate]) =>
