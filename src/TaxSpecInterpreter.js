@@ -14,14 +14,25 @@ import { lowerTaxSpec } from './taxspec/lowerTaxSpec.js';
 import { installEvaluationMethods } from './taxspec/evaluationMethods.js';
 import { installCodegenMethods } from './taxspec/codegenMethods.js';
 
+const INTERNALS = new WeakMap();
+
 export default class TaxSpecInterpreter {
   constructor(taxSpecification, currencyConversions = {}) {
     if (typeof taxSpecification !== 'string' || taxSpecification.trim() === '') {
       throw new Error('taxSpecification must be a non-empty string.');
     }
 
-    this.modelByCountry = lowerTaxSpec(this._parseProgram(taxSpecification));
-    this.currencyToEur = this._buildCurrencyConversions(currencyConversions, this.modelByCountry);
+    const models = lowerTaxSpec(this._parseProgram(taxSpecification));
+    const currencies = this._buildCurrencyConversions(currencyConversions, models);
+    INTERNALS.set(this, {
+      models,
+      currencies,
+      catalogue: this._buildCatalogue(models, currencies),
+    });
+  }
+
+  getCatalogue() {
+    return INTERNALS.get(this).catalogue;
   }
 
   marginalRate(country, enabledSchedules, currency, grossIncome) {
@@ -34,20 +45,47 @@ export default class TaxSpecInterpreter {
     return this._evaluateOverallFromPrepared(prepared, grossIncome);
   }
 
-  prepare(country, enabledSchedules, currency) {
+  prepare(country, enabledSchedules, currency, periodsPerYear = 1) {
     const prepared = this._prepareEvaluation(country, enabledSchedules, currency);
     const generated = this._tryBuildPreparedCodegen(prepared);
-    if (generated) {
-      return {
-        marginalRate: generated.marginalRate,
-        overallRate: generated.overallRate,
-        generatedCode: generated.source,
-      };
-    }
-
+    const evaluateMarginalRate = generated
+      ? generated.marginalRate
+      : (grossIncome) => this._evaluateMarginalFromPrepared(prepared, grossIncome, true);
+    const evaluateOverallRate = generated
+      ? generated.overallRate
+      : (grossIncome) => this._evaluateOverallFromPrepared(prepared, grossIncome, true);
+    const finite = (name, income, outcome) => {
+      if (!Number.isFinite(outcome)) {
+        throw new Error(
+          `Non-finite ${name} for ${prepared.countryModel.countryName} at income ${income}.`
+        );
+      }
+      return outcome;
+    };
+    const marginalRate = (grossIncome) => {
+      const income = Number(grossIncome);
+      return income < 0
+        ? 0
+        : finite('marginalRate', income, evaluateMarginalRate(income * periodsPerYear));
+    };
+    const overallRate = (grossIncome) => {
+      const income = Number(grossIncome);
+      return income <= 0
+        ? 0
+        : finite('overallRate', income, evaluateOverallRate(income * periodsPerYear));
+    };
+    const taxPaid = (grossIncome) => {
+      const income = Number(grossIncome);
+      return income <= 0 ? 0 : finite('taxPaid', income, overallRate(income) * income);
+    };
     return {
-      marginalRate: (grossIncome) => this._evaluateMarginalFromPrepared(prepared, grossIncome),
-      overallRate: (grossIncome) => this._evaluateOverallFromPrepared(prepared, grossIncome),
+      marginalRate,
+      overallRate,
+      taxPaid,
+      netPay: (grossIncome) => {
+        const income = Number(grossIncome);
+        return income <= 0 ? income : finite('netPay', income, income - taxPaid(income));
+      },
     };
   }
 
@@ -121,9 +159,34 @@ export default class TaxSpecInterpreter {
     return conversions;
   }
 
+  _buildCatalogue(models, currencyConversions) {
+    const countries = [...models.values()].map((country) =>
+      Object.freeze({
+        id: country.countryName,
+        label: country.countryName.replace(/_/g, ' '),
+        currency: country.currencyKey,
+        scheduleKinds: Object.freeze([
+          ...new Set(
+            country.components
+              .map((component) => component.kindKey)
+              .filter((kind) => kind !== '_')
+          ),
+        ]),
+        plotBreaks: Object.freeze([...country.numericLiterals]),
+      })
+    );
+    const currencies = [...currencyConversions].map(([code, eurRate]) =>
+      Object.freeze({ code, eurRate })
+    );
+    return Object.freeze({
+      countries: Object.freeze(countries),
+      currencies: Object.freeze(currencies),
+    });
+  }
+
   _resolveCountry(country) {
     const countryKey = normalizeIdentifier(country);
-    const countryModel = this.modelByCountry.get(countryKey);
+    const countryModel = this._models().get(countryKey);
     if (!countryModel) throw new Error(`Unknown country: ${country}`);
     return countryModel;
   }
@@ -156,7 +219,7 @@ export default class TaxSpecInterpreter {
     return prepared;
   }
 
-  _evaluateMarginalFromPrepared(prepared, grossIncome) {
+  _evaluateMarginalFromPrepared(prepared, grossIncome, preserveNonFinite = false) {
     const baseState = this._createBaseStateFromPrepared(prepared, grossIncome);
     if (baseState.localIncome < 0) return 0;
 
@@ -164,10 +227,10 @@ export default class TaxSpecInterpreter {
     for (const component of prepared.activeComponents) {
       totalMarginalRate += this._evaluateComponentMarginal(component, baseState);
     }
-    return maybeFinite(totalMarginalRate);
+    return preserveNonFinite ? Number(totalMarginalRate) : maybeFinite(totalMarginalRate);
   }
 
-  _evaluateOverallFromPrepared(prepared, grossIncome) {
+  _evaluateOverallFromPrepared(prepared, grossIncome, preserveNonFinite = false) {
     const baseState = this._createBaseStateFromPrepared(prepared, grossIncome);
     if (baseState.localIncome <= 0) return 0;
 
@@ -175,7 +238,8 @@ export default class TaxSpecInterpreter {
     for (const component of prepared.activeComponents) {
       totalTax += this._evaluateComponentTotal(component, baseState);
     }
-    return maybeFinite(totalTax / baseState.localIncome);
+    const overallRate = totalTax / baseState.localIncome;
+    return preserveNonFinite ? Number(overallRate) : maybeFinite(overallRate);
   }
 
   _createBaseStateFromPrepared(prepared, grossIncome) {
@@ -208,12 +272,20 @@ export default class TaxSpecInterpreter {
   _convertIncomeToCountry(amount, sourceCurrency, targetCurrency) {
     if (sourceCurrency === targetCurrency) return amount;
 
-    const sourceRate = this.currencyToEur.get(sourceCurrency);
-    const targetRate = this.currencyToEur.get(targetCurrency);
+    const sourceRate = this._currencies().get(sourceCurrency);
+    const targetRate = this._currencies().get(targetCurrency);
     if (!sourceRate || !targetRate) {
       throw new Error(`Missing currency conversion for ${sourceCurrency} -> ${targetCurrency}`);
     }
     return (amount * sourceRate) / targetRate;
+  }
+
+  _models() {
+    return INTERNALS.get(this).models;
+  }
+
+  _currencies() {
+    return INTERNALS.get(this).currencies;
   }
 
   _activeComponents(countryModel, enabledSet) {

@@ -342,7 +342,7 @@ class EvaluationMethods {
       if (kindName) return kindName;
 
       // Try Country.Name
-      const countryModel = this.modelByCountry.get(a);
+      const countryModel = this._models().get(a);
       if (countryModel) {
         const matches = countryModel.byName.get(b) || [];
         if (matches.length === 1) return matches[0];
@@ -354,7 +354,7 @@ class EvaluationMethods {
 
     if (normalized.length === 3) {
       const [countryKey, kindKey, nameKey] = normalized;
-      const countryModel = this.modelByCountry.get(countryKey);
+      const countryModel = this._models().get(countryKey);
       if (!countryModel) throw new Error(`Unknown country in reference: ${refPath.join('.')}`);
 
       const component = countryModel.byKindAndName.get(`${kindKey}:${nameKey}`);

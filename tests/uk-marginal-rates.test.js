@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   assertMarginalRateSamples,
@@ -48,20 +47,6 @@ test(`${COUNTRY_LABEL} marginal rates match expected schedule`, () => {
     expectedAtIncome: expectedMarginalRate,
     epsilon: MARGINAL_EPSILON,
   });
-});
-
-test(`${COUNTRY_LABEL} generated marginal fast path avoids derivative fallback`, () => {
-  const prepared = interpreter.prepare(COUNTRY, ENABLED_SCHEDULES, CURRENCY);
-  const generatedCode = prepared.generatedCode || '';
-
-  assert.ok(
-    generatedCode.includes('function __m0(x, c)'),
-    `Expected generated code to include __m0 for ${COUNTRY}.`
-  );
-  assert.ok(
-    !generatedCode.includes('__derivativeAt((__income) => __v0(__income, c), x)'),
-    `Expected generated marginal fast path for ${COUNTRY} to avoid derivative fallback.`
-  );
 });
 
 test(`${COUNTRY_LABEL} prepared evaluator matches direct API`, () => {

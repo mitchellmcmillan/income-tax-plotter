@@ -51,8 +51,10 @@ function createEvaluators(config) {
   const interpreter = new TaxSpecInterpreter(specification, DEFAULT_CURRENCY_CONVERSIONS);
   const prepared = interpreter.prepare(config.country, config.enabledSchedules, config.currency);
   return {
-    marginalRate: (income) => prepared.marginalRate(income),
-    overallRate: (income) => prepared.overallRate(income),
+    marginalRate: prepared.marginalRate,
+    overallRate: prepared.overallRate,
+    overallTaxValue: prepared.taxPaid,
+    netPay: prepared.netPay,
   };
 }
 
@@ -67,22 +69,8 @@ function buildRows(config, evaluators) {
       throw new Error(`Non-finite marginalRate at income ${grossIncome}: ${marginalRate}`);
     }
 
-    let overallRate = null;
-    if (typeof evaluators.overallRate === 'function') {
-      overallRate = evaluators.overallRate(grossIncome);
-    }
-
-    let overallTaxValue = null;
-    if (typeof evaluators.overallTaxValue === 'function') {
-      overallTaxValue = evaluators.overallTaxValue(grossIncome);
-    }
-
-    if (!Number.isFinite(overallRate) && Number.isFinite(overallTaxValue)) {
-      overallRate = grossIncome <= 0 ? 0 : overallTaxValue / grossIncome;
-    }
-    if (!Number.isFinite(overallTaxValue) && Number.isFinite(overallRate)) {
-      overallTaxValue = overallRate * grossIncome;
-    }
+    const overallRate = evaluators.overallRate(grossIncome);
+    const overallTaxValue = evaluators.overallTaxValue(grossIncome);
 
     if (!Number.isFinite(overallRate)) {
       throw new Error(`Non-finite overallRate at income ${grossIncome}: ${overallRate}`);
@@ -91,12 +79,7 @@ function buildRows(config, evaluators) {
       throw new Error(`Non-finite overallTaxValue at income ${grossIncome}: ${overallTaxValue}`);
     }
 
-    let netPay = null;
-    if (typeof evaluators.netPay === 'function') {
-      netPay = evaluators.netPay(grossIncome);
-    } else {
-      netPay = grossIncome - overallTaxValue;
-    }
+    const netPay = evaluators.netPay(grossIncome);
     if (!Number.isFinite(netPay)) {
       throw new Error(`Non-finite netPay at income ${grossIncome}: ${netPay}`);
     }

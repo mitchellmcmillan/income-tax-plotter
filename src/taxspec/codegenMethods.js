@@ -25,7 +25,6 @@ class CodegenMethods {
       }
 
       return {
-        source,
         marginalRate: compiled.marginalRate,
         overallRate: compiled.overallRate,
       };
@@ -37,7 +36,7 @@ class CodegenMethods {
   _buildPreparedCodegenSource(prepared) {
     const allCountryComponents = [...prepared.countryModel.components];
     const countryByKey = new Map();
-    for (const [countryKey, countryModel] of this.modelByCountry.entries()) {
+    for (const [countryKey, countryModel] of this._models().entries()) {
       countryByKey.set(countryKey, countryModel);
     }
 
@@ -54,8 +53,8 @@ class CodegenMethods {
       componentIndexByKey.set(this._codegenComponentMapKey(component), index);
     }
 
-    const sourceRate = this.currencyToEur.get(prepared.sourceCurrency);
-    const targetRate = this.currencyToEur.get(prepared.countryModel.currencyKey);
+    const sourceRate = this._currencies().get(prepared.sourceCurrency);
+    const targetRate = this._currencies().get(prepared.countryModel.currencyKey);
     if (!sourceRate || !targetRate) {
       throw new Error(`Missing currency conversion for ${prepared.sourceCurrency} -> ${prepared.countryModel.currencyKey}`);
     }
@@ -284,8 +283,7 @@ ${componentFunctionBlocks}
 
     if (helperUsage.maybeFinite) {
       blocks.push(`function __maybeFinite(value) {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : 0;
+    return Number(value);
   }`);
     }
 
@@ -2501,7 +2499,7 @@ ${componentFunctionBlocks}
       const kindNameMatch = countryModel.byKindAndName.get(`${left}:${right}`);
       if (kindNameMatch) return kindNameMatch;
 
-      const targetCountryModel = this.modelByCountry.get(left);
+      const targetCountryModel = this._models().get(left);
       if (targetCountryModel) {
         const matches = targetCountryModel.byName.get(right) || [];
         if (matches.length === 1) return matches[0];
@@ -2512,7 +2510,7 @@ ${componentFunctionBlocks}
 
     if (normalized.length === 3) {
       const [countryKey, kindKey, nameKey] = normalized;
-      const targetCountryModel = this.modelByCountry.get(countryKey);
+      const targetCountryModel = this._models().get(countryKey);
       if (!targetCountryModel) return null;
       return targetCountryModel.byKindAndName.get(`${kindKey}:${nameKey}`) || null;
     }
@@ -2552,8 +2550,8 @@ ${componentFunctionBlocks}
     if (!fromCountryModel || !toCountryModel) return null;
     if (fromCountryModel.countryKey === toCountryModel.countryKey) return expression;
 
-    const sourceRate = this.currencyToEur.get(fromCountryModel.currencyKey);
-    const targetRate = this.currencyToEur.get(toCountryModel.currencyKey);
+    const sourceRate = this._currencies().get(fromCountryModel.currencyKey);
+    const targetRate = this._currencies().get(toCountryModel.currencyKey);
     if (!sourceRate || !targetRate) return null;
 
     const factor = sourceRate / targetRate;
@@ -2565,8 +2563,8 @@ ${componentFunctionBlocks}
     if (!fromCountryModel || !toCountryModel) return null;
     if (fromCountryModel.countryKey === toCountryModel.countryKey) return 1;
 
-    const sourceRate = this.currencyToEur.get(fromCountryModel.currencyKey);
-    const targetRate = this.currencyToEur.get(toCountryModel.currencyKey);
+    const sourceRate = this._currencies().get(fromCountryModel.currencyKey);
+    const targetRate = this._currencies().get(toCountryModel.currencyKey);
     if (!sourceRate || !targetRate) return null;
     return sourceRate / targetRate;
   }

@@ -92,7 +92,10 @@ test(`${COUNTRY_LABEL} prepared evaluator matches direct API`, () => {
 });
 
 test('currency metadata supports reverse syntax (N CUR = EUR)', () => {
-  assertApproxEqual(reverseCurrencyInterpreter.currencyToEur.get('REV'), 1 / 8, 1e-12);
+  const currency = reverseCurrencyInterpreter
+    .getCatalogue()
+    .currencies.find(({ code }) => code === 'REV');
+  assertApproxEqual(currency.eurRate, 1 / 8, 1e-12);
 
   // 80 EUR => 640 REV under (8 REV = EUR); marginal rate stays consistent.
   const marginal = reverseCurrencyInterpreter.marginalRate(
@@ -105,7 +108,10 @@ test('currency metadata supports reverse syntax (N CUR = EUR)', () => {
 });
 
 test('currency metadata supports bare syntax (CUR)', () => {
-  assertApproxEqual(bareCurrencyInterpreter.currencyToEur.get('EUR'), 1, 1e-12);
+  const currency = bareCurrencyInterpreter
+    .getCatalogue()
+    .currencies.find(({ code }) => code === 'EUR');
+  assertApproxEqual(currency.eurRate, 1, 1e-12);
 
   const marginal = bareCurrencyInterpreter.marginalRate(
     'BareCurrency',

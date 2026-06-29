@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Coordinates, Line, Mafs, Plot } from 'mafs';
 import Editor from '@monaco-editor/react';
 import taxSpecification from '../income.tax?raw';
 import TaxSpecInterpreter from './TaxSpecInterpreter.js';
+import { createPlotPlanner } from './plotPlanning.js';
+import { createUrlPlotState } from './urlPlotState.js';
 import githubMark from './assets/github-mark.svg';
 import './App.css';
 
@@ -58,10 +60,6 @@ const SCHEDULE_KIND_TO_LABEL = {
   religious: 'Religious tax',
 };
 
-function formatCountryLabel(countryName) {
-  return String(countryName).replace(/_/g, ' ');
-}
-
 function scheduleLabelFromKind(kind) {
   const normalizedKind = String(kind).normalize('NFKC').trim().toLowerCase();
   const override = SCHEDULE_KIND_TO_LABEL[normalizedKind];
@@ -72,54 +70,6 @@ function scheduleLabelFromKind(kind) {
     .filter(Boolean)
     .map((segment) => segment[0].toUpperCase() + segment.slice(1))
     .join(' ');
-}
-
-function createTaxModelFromInterpreter(interpreter) {
-  const countries = [...interpreter.modelByCountry.values()]
-    .map((countryModel) => {
-      const kindSet = new Set();
-      for (const component of countryModel.components) {
-        if (component.kindKey !== '_') {
-          kindSet.add(component.kindKey);
-        }
-      }
-
-      const scheduleKinds = [...kindSet].sort((left, right) => {
-        const leftLabel = scheduleLabelFromKind(left);
-        const rightLabel = scheduleLabelFromKind(right);
-        const leftPriority = SCHEDULE_PRIORITY[leftLabel] ?? Number.MAX_SAFE_INTEGER;
-        const rightPriority = SCHEDULE_PRIORITY[rightLabel] ?? Number.MAX_SAFE_INTEGER;
-        if (leftPriority !== rightPriority) {
-          return leftPriority - rightPriority;
-        }
-        return leftLabel.localeCompare(rightLabel);
-      });
-
-      return {
-        country: countryModel.countryName,
-        countryLabel: formatCountryLabel(countryModel.countryName),
-        currency: countryModel.currencyKey,
-        scheduleKinds,
-      };
-    })
-    .sort((left, right) => left.countryLabel.localeCompare(right.countryLabel));
-
-  const scheduleKinds = [...new Set(countries.flatMap((country) => country.scheduleKinds))];
-  const scheduleTypes = scheduleKinds
-    .map((kind) => scheduleLabelFromKind(kind))
-    .sort((left, right) => {
-      const leftPriority = SCHEDULE_PRIORITY[left] ?? Number.MAX_SAFE_INTEGER;
-      const rightPriority = SCHEDULE_PRIORITY[right] ?? Number.MAX_SAFE_INTEGER;
-      if (leftPriority !== rightPriority) {
-        return leftPriority - rightPriority;
-      }
-      return left.localeCompare(right);
-    });
-
-  return {
-    countries,
-    scheduleTypes,
-  };
 }
 
 function createCurrencyLabelFormatter(currencyCode) {
@@ -176,17 +126,24 @@ function createCompactNumberLabelFormatter() {
 }
 
 const TAX_INTERPRETER = new TaxSpecInterpreter(taxSpecification);
-const CURRENCY_TO_EUR_RATES = Object.fromEntries(TAX_INTERPRETER.currencyToEur.entries());
-const TAX_MODEL = createTaxModelFromInterpreter(TAX_INTERPRETER);
-const COUNTRY_LINES = TAX_MODEL.countries.map((countryEntry, index) => ({
-  country: countryEntry.country,
-  countryLabel: countryEntry.countryLabel,
+const TAX_CATALOGUE = TAX_INTERPRETER.getCatalogue();
+const CURRENCY_TO_EUR_RATES = Object.fromEntries(
+  TAX_CATALOGUE.currencies.map(({ code, eurRate }) => [code, eurRate])
+);
+const COUNTRY_LINES = TAX_CATALOGUE.countries.map((countryEntry, index) => ({
+  country: countryEntry.id,
+  countryLabel: countryEntry.label,
   currency: countryEntry.currency,
   scheduleKinds: countryEntry.scheduleKinds,
   color: COUNTRY_COLORS[index % COUNTRY_COLORS.length],
-}));
+})).sort((left, right) => left.countryLabel.localeCompare(right.countryLabel));
 const COUNTRY_KEYS = COUNTRY_LINES.map((countryLine) => countryLine.country);
-const SCHEDULE_TYPES = TAX_MODEL.scheduleTypes;
+const SCHEDULE_TYPES = [
+  ...new Set(COUNTRY_LINES.flatMap((country) => country.scheduleKinds).map(scheduleLabelFromKind)),
+].sort((left, right) => {
+  return (SCHEDULE_PRIORITY[left] ?? 99) - (SCHEDULE_PRIORITY[right] ?? 99)
+    || left.localeCompare(right);
+});
 const DEFAULT_ENABLED_COUNTRIES = Object.fromEntries(
   COUNTRY_KEYS.map((country) => [country, true])
 );
@@ -196,8 +153,7 @@ const DEFAULT_ENABLED_SCHEDULES = Object.fromEntries(
     !/(?:student|education)\s+loan|religious\s+tax/i.test(scheduleType),
   ])
 );
-const CURRENCY_TO_EUR_MAP = new Map(Object.entries(CURRENCY_TO_EUR_RATES));
-const DISPLAY_CURRENCIES = [...CURRENCY_TO_EUR_MAP.keys()].sort((left, right) => {
+const DISPLAY_CURRENCIES = Object.keys(CURRENCY_TO_EUR_RATES).sort((left, right) => {
   if (left === 'EUR') {
     return -1;
   }
@@ -211,309 +167,23 @@ const DEFAULT_DISPLAY_CURRENCY = DISPLAY_CURRENCIES.includes('EUR')
   ? 'EUR'
   : DISPLAY_CURRENCIES[0];
 const DEFAULT_DISPLAY_CURRENCY_TO_EUR =
-  CURRENCY_TO_EUR_MAP.get(DEFAULT_DISPLAY_CURRENCY) ?? 1;
-const LARGE_DIGIT_CURRENCIES = new Set(['NOK', 'DKK', 'JPY']);
-const RATE_TYPE_TO_HASH = {
-  marginal: 'marginal',
-  cumulative: 'overall',
-  'marginal-overall': 'marginal_overall',
-  'tax-paid': 'tax_paid',
-  'net-pay': 'net_pay',
-};
-const HASH_TO_RATE_TYPE = new Map([
-  ['marginal', 'marginal'],
-  ['overall', 'cumulative'],
-  ['cumulative', 'cumulative'],
-  ['marginal_overall', 'marginal-overall'],
-  ['marginal-overall', 'marginal-overall'],
-  ['marginaloverall', 'marginal-overall'],
-  ['tax_paid', 'tax-paid'],
-  ['taxpaid', 'tax-paid'],
-  ['tax-paid', 'tax-paid'],
-  ['net_pay', 'net-pay'],
-  ['netpay', 'net-pay'],
-  ['net-pay', 'net-pay'],
-]);
+  CURRENCY_TO_EUR_RATES[DEFAULT_DISPLAY_CURRENCY] ?? 1;
 const RATE_PERCENT_SCALE = 100;
-const DISCONTINUITY_MAX_SAMPLE_INTERVALS = 120000;
-const DISCONTINUITY_BASELINE_SAMPLE_SIZE = 4096;
-const DISCONTINUITY_JUMP_FACTOR = 8;
-const DISCONTINUITY_RELATIVE_JUMP_FLOOR = 0.008;
-const DISCONTINUITY_ABSOLUTE_JUMP_FLOOR = 0.05;
-const DISCONTINUITY_DOMAIN_EPSILON = 1e-3;
-const DISCONTINUITY_MIN_SEGMENT_WIDTH = 1e-6;
-const DISCONTINUITY_CACHE_LOOKAHEAD_FACTOR = 0.5;
-const Y_AXIS_AUTOSCALE_SAMPLE_COUNT = 160;
-const Y_AXIS_AUTOSCALE_CACHE_LOOKAHEAD_FACTOR = 0.5;
-const Y_AXIS_AUTOSCALE_MIN_SAMPLES = 96;
-const Y_AXIS_AUTOSCALE_MAX_SAMPLES = 2048;
-
-function toHashIdentifier(value) {
-  return value
-    .normalize('NFKC')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-}
-
-const SCHEDULE_TYPE_TO_HASH = Object.fromEntries(
-  SCHEDULE_TYPES.map((scheduleType) => [scheduleType, toHashIdentifier(scheduleType)])
-);
-const HASH_TO_SCHEDULE_TYPE = new Map(
-  SCHEDULE_TYPES.map((scheduleType) => [SCHEDULE_TYPE_TO_HASH[scheduleType], scheduleType])
-);
-const COUNTRY_LOOKUP = (() => {
-  const lookup = new Map();
-
-  COUNTRY_LINES.forEach((countryLine) => {
-    const normalizedCountry = countryLine.country.normalize('NFKC').trim().toLowerCase();
-    const normalizedCountryLabel = countryLine.countryLabel.normalize('NFKC').trim().toLowerCase();
-    lookup.set(normalizedCountry, countryLine.country);
-    lookup.set(normalizedCountryLabel, countryLine.country);
-  });
-
-  return lookup;
-})();
-const SCHEDULE_LOOKUP = new Map(
-  SCHEDULE_TYPES.map((scheduleType) => [
-    scheduleType.normalize('NFKC').trim().toLowerCase(),
-    scheduleType,
-  ])
-);
-
-function decodeEnabledMap(encodedValue, keys, fallbackMap) {
-  const decoded = { ...fallbackMap };
-  if (!encodedValue || /[^01]/.test(encodedValue)) {
-    return decoded;
-  }
-
-  keys.forEach((key, index) => {
-    if (index < encodedValue.length) {
-      decoded[key] = encodedValue[index] === '1';
-    }
-  });
-
-  return decoded;
-}
-
-function parseCommaList(rawValue) {
-  if (rawValue === null || rawValue === undefined) {
-    return null;
-  }
-
-  return rawValue
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
-}
-
-function decodeCountriesFromList(rawCountries, fallbackMap) {
-  const countryTokens = parseCommaList(rawCountries);
-  if (countryTokens === null) {
-    return { ...fallbackMap };
-  }
-
-  const decoded = Object.fromEntries(COUNTRY_KEYS.map((country) => [country, false]));
-  countryTokens.forEach((countryToken) => {
-    const normalized = countryToken.normalize('NFKC').trim().toLowerCase();
-    const resolvedCountry = COUNTRY_LOOKUP.get(normalized);
-    if (resolvedCountry) {
-      decoded[resolvedCountry] = true;
-    }
-  });
-
-  return decoded;
-}
-
-function decodeSchedulesFromList(rawSchedules, fallbackMap) {
-  const scheduleTokens = parseCommaList(rawSchedules);
-  if (scheduleTokens === null) {
-    return { ...fallbackMap };
-  }
-
-  const decoded = Object.fromEntries(SCHEDULE_TYPES.map((scheduleType) => [scheduleType, false]));
-  scheduleTokens.forEach((scheduleToken) => {
-    const normalizedToken = toHashIdentifier(scheduleToken);
-    const byHash = HASH_TO_SCHEDULE_TYPE.get(normalizedToken);
-    if (byHash) {
-      decoded[byHash] = true;
-      return;
-    }
-
-    const byName = SCHEDULE_LOOKUP.get(scheduleToken.normalize('NFKC').trim().toLowerCase());
-    if (byName) {
-      decoded[byName] = true;
-    }
-  });
-
-  return decoded;
-}
-
-function decodeRateType(rawType, fallbackRateType) {
-  if (!rawType) {
-    return fallbackRateType;
-  }
-
-  const normalizedType = toHashIdentifier(rawType);
-  return HASH_TO_RATE_TYPE.get(normalizedType) ?? fallbackRateType;
-}
-
-function usesThousandUnits(displayCurrency, displayCurrencyToEur, payPeriod) {
-  if (payPeriod === 'annual') {
-    return true;
-  }
-
-  const normalizedCurrency = String(displayCurrency || '')
-    .normalize('NFKC')
-    .trim()
-    .toUpperCase();
-  if (LARGE_DIGIT_CURRENCIES.has(normalizedCurrency)) {
-    return true;
-  }
-
-  return Number.isFinite(displayCurrencyToEur) && displayCurrencyToEur < 0.2;
-}
-
-function getDisplayInputScale(displayCurrency, displayCurrencyToEur, payPeriod) {
-  return usesThousandUnits(displayCurrency, displayCurrencyToEur, payPeriod) ? 1000 : 1;
-}
-
-function parseHashRange(rawRange, displayCurrencyToEur, periodsPerYear, displayInputScale) {
-  const safeCurrencyToEur =
-    Number.isFinite(displayCurrencyToEur) && displayCurrencyToEur > 0
-      ? displayCurrencyToEur
-      : DEFAULT_DISPLAY_CURRENCY_TO_EUR;
-  const safePeriodsPerYear =
-    Number.isFinite(periodsPerYear) && periodsPerYear > 0
-      ? periodsPerYear
-      : PAY_PERIODS_PER_YEAR[DEFAULT_PAY_PERIOD];
-  const safeDisplayInputScale =
-    Number.isFinite(displayInputScale) && displayInputScale > 0 ? displayInputScale : 1000;
-  let minDisplayInput = DEFAULT_MIN_EUR / (safeCurrencyToEur * safePeriodsPerYear * safeDisplayInputScale);
-  let maxDisplayInput = DEFAULT_MAX_EUR / (safeCurrencyToEur * safePeriodsPerYear * safeDisplayInputScale);
-
-  if (rawRange) {
-    const [rawMin, rawMax] = rawRange.split(',', 2);
-    const parsedMin = Number(rawMin);
-    const parsedMax = Number(rawMax);
-
-    if (Number.isFinite(parsedMin)) {
-      minDisplayInput = Math.max(0, parsedMin);
-    }
-    if (Number.isFinite(parsedMax)) {
-      maxDisplayInput = Math.max(0, parsedMax);
-    }
-  }
-
-  return {
-    minKEurInput: String(minDisplayInput),
-    maxKEurInput: String(maxDisplayInput),
-  };
-}
-
-function convertInputBetweenDisplayContexts(inputValue, fromContext, toContext) {
-  const parsed = Number(inputValue);
-  const fromCurrencyToEur = fromContext?.currencyToEur;
-  const toCurrencyToEur = toContext?.currencyToEur;
-  const fromPeriodsPerYear = fromContext?.periodsPerYear;
-  const toPeriodsPerYear = toContext?.periodsPerYear;
-  const fromInputScale = fromContext?.inputScale;
-  const toInputScale = toContext?.inputScale;
-
-  if (
-    !Number.isFinite(parsed) ||
-    !Number.isFinite(fromCurrencyToEur) ||
-    fromCurrencyToEur <= 0 ||
-    !Number.isFinite(toCurrencyToEur) ||
-    toCurrencyToEur <= 0 ||
-    !Number.isFinite(fromPeriodsPerYear) ||
-    fromPeriodsPerYear <= 0 ||
-    !Number.isFinite(toPeriodsPerYear) ||
-    toPeriodsPerYear <= 0 ||
-    !Number.isFinite(fromInputScale) ||
-    fromInputScale <= 0 ||
-    !Number.isFinite(toInputScale) ||
-    toInputScale <= 0
-  ) {
-    return inputValue;
-  }
-
-  const annualEurValue = parsed * fromInputScale * fromPeriodsPerYear * fromCurrencyToEur;
-  const converted = annualEurValue / (toCurrencyToEur * toPeriodsPerYear * toInputScale);
-  return String(Number(converted.toFixed(6)));
-}
-
-function loadInitialStateFromHash() {
-  const defaultPeriodsPerYear = PAY_PERIODS_PER_YEAR[DEFAULT_PAY_PERIOD];
-  const defaultDisplayInputScale = getDisplayInputScale(
-    DEFAULT_DISPLAY_CURRENCY,
-    DEFAULT_DISPLAY_CURRENCY_TO_EUR,
-    DEFAULT_PAY_PERIOD
-  );
-  const defaultState = {
-    enabledCountries: { ...DEFAULT_ENABLED_COUNTRIES },
-    enabledSchedules: { ...DEFAULT_ENABLED_SCHEDULES },
+const URL_PLOT_STATE = createUrlPlotState({
+  countries: COUNTRY_LINES,
+  schedules: SCHEDULE_TYPES,
+  currenciesToEur: CURRENCY_TO_EUR_RATES,
+  periodsPerYear: PAY_PERIODS_PER_YEAR,
+  defaults: {
+    enabledCountries: DEFAULT_ENABLED_COUNTRIES,
+    enabledSchedules: DEFAULT_ENABLED_SCHEDULES,
     rateType: 'marginal',
     displayCurrency: DEFAULT_DISPLAY_CURRENCY,
     payPeriod: DEFAULT_PAY_PERIOD,
-    minKEurInput: String(
-      DEFAULT_MIN_EUR /
-        (DEFAULT_DISPLAY_CURRENCY_TO_EUR * defaultPeriodsPerYear * defaultDisplayInputScale)
-    ),
-    maxKEurInput: String(
-      DEFAULT_MAX_EUR /
-        (DEFAULT_DISPLAY_CURRENCY_TO_EUR * defaultPeriodsPerYear * defaultDisplayInputScale)
-    ),
-  };
-
-  if (typeof window === 'undefined' || !window.location.hash) {
-    return defaultState;
-  }
-
-  const hashParams = new URLSearchParams(window.location.hash.slice(1));
-  const hashRateType = hashParams.get('type') ?? hashParams.get('r');
-  const hashDisplayCurrency = hashParams.get('currency') ?? hashParams.get('u');
-  const hashPayPeriod = hashParams.get('period');
-  const payPeriod = PAY_PERIOD_SET.has(hashPayPeriod)
-    ? hashPayPeriod
-    : defaultState.payPeriod;
-  const displayCurrency = DISPLAY_CURRENCY_SET.has(hashDisplayCurrency)
-    ? hashDisplayCurrency
-    : defaultState.displayCurrency;
-  const displayCurrencyToEur =
-    CURRENCY_TO_EUR_MAP.get(displayCurrency) ?? DEFAULT_DISPLAY_CURRENCY_TO_EUR;
-  const periodsPerYear = PAY_PERIODS_PER_YEAR[payPeriod] ?? defaultPeriodsPerYear;
-  const displayInputScale = getDisplayInputScale(
-    displayCurrency,
-    displayCurrencyToEur,
-    payPeriod
-  );
-  const parsedRange = parseHashRange(
-    hashParams.get('x_range') ?? hashParams.get('x'),
-    displayCurrencyToEur,
-    periodsPerYear,
-    displayInputScale
-  );
-  const countriesParam = hashParams.get('countries');
-  const schedulesParam = hashParams.get('schedules');
-  const useExplicitCountryList = countriesParam !== null;
-  const useExplicitScheduleList = schedulesParam !== null;
-
-  return {
-    enabledCountries: useExplicitCountryList
-      ? decodeCountriesFromList(countriesParam, defaultState.enabledCountries)
-      : decodeEnabledMap(hashParams.get('c'), COUNTRY_KEYS, defaultState.enabledCountries),
-    enabledSchedules: useExplicitScheduleList
-      ? decodeSchedulesFromList(schedulesParam, defaultState.enabledSchedules)
-      : decodeEnabledMap(hashParams.get('s'), SCHEDULE_TYPES, defaultState.enabledSchedules),
-    rateType: decodeRateType(hashRateType, defaultState.rateType),
-    displayCurrency,
-    payPeriod,
-    minKEurInput: parsedRange.minKEurInput,
-    maxKEurInput: parsedRange.maxKEurInput,
-  };
-}
+    minKEurInput: String(DEFAULT_MIN_EUR / (DEFAULT_DISPLAY_CURRENCY_TO_EUR * 1000)),
+    maxKEurInput: String(DEFAULT_MAX_EUR / (DEFAULT_DISPLAY_CURRENCY_TO_EUR * 1000)),
+  },
+});
 
 function fractionDigitsForStep(step) {
   if (!Number.isFinite(step) || step <= 0) {
@@ -611,398 +281,8 @@ function alignDisplayIncomeToInteger(value) {
   return Math.round(parsed);
 }
 
-function buildContinuousDomainsFromJumps(domainMin, domainMax, jumps) {
-  if (!Number.isFinite(domainMin) || !Number.isFinite(domainMax) || domainMax <= domainMin) {
-    return [];
-  }
-
-  const continuousDomains = [];
-  let segmentStart = domainMin;
-  for (const jump of jumps) {
-    const segmentEnd = Math.max(
-      segmentStart,
-      Math.min(domainMax, jump.x - DISCONTINUITY_DOMAIN_EPSILON)
-    );
-
-    if (segmentEnd - segmentStart > DISCONTINUITY_MIN_SEGMENT_WIDTH) {
-      continuousDomains.push([segmentStart, segmentEnd]);
-    }
-
-    segmentStart = Math.max(
-      segmentStart,
-      Math.min(domainMax, jump.x + DISCONTINUITY_DOMAIN_EPSILON)
-    );
-  }
-
-  if (domainMax - segmentStart > DISCONTINUITY_MIN_SEGMENT_WIDTH) {
-    continuousDomains.push([segmentStart, domainMax]);
-  }
-
-  if (continuousDomains.length === 0) {
-    continuousDomains.push([domainMin, domainMax]);
-  }
-
-  return continuousDomains;
-}
-
-function splitContinuousDomainAtBreaks(domain, forcedBreaks) {
-  if (
-    !Array.isArray(domain) ||
-    domain.length !== 2 ||
-    !Number.isFinite(domain[0]) ||
-    !Number.isFinite(domain[1]) ||
-    domain[1] <= domain[0]
-  ) {
-    return [];
-  }
-
-  if (!Array.isArray(forcedBreaks) || forcedBreaks.length === 0) {
-    return [domain];
-  }
-
-  const [domainStart, domainEnd] = domain;
-  const relevantBreaks = forcedBreaks.filter(
-    (forcedBreak) =>
-      Number.isFinite(forcedBreak) &&
-      forcedBreak > domainStart + DISCONTINUITY_MIN_SEGMENT_WIDTH &&
-      forcedBreak < domainEnd - DISCONTINUITY_MIN_SEGMENT_WIDTH
-  );
-
-  if (relevantBreaks.length === 0) {
-    return [domain];
-  }
-
-  const splitDomains = [];
-  let segmentStart = domainStart;
-  for (const forcedBreak of relevantBreaks) {
-    if (forcedBreak - segmentStart > DISCONTINUITY_MIN_SEGMENT_WIDTH) {
-      splitDomains.push([segmentStart, forcedBreak]);
-    }
-    segmentStart = forcedBreak;
-  }
-
-  if (domainEnd - segmentStart > DISCONTINUITY_MIN_SEGMENT_WIDTH) {
-    splitDomains.push([segmentStart, domainEnd]);
-  }
-
-  return splitDomains.length > 0 ? splitDomains : [domain];
-}
-
-function buildContinuousDomainsFromJumpsAndBreaks(domainMin, domainMax, jumps, forcedBreaks) {
-  return buildContinuousDomainsFromJumps(domainMin, domainMax, jumps).flatMap((domain) =>
-    splitContinuousDomainAtBreaks(domain, forcedBreaks)
-  );
-}
-
-function sampleSeriesPoints(yAccessor, domainMin, domainMax, sampleCount) {
-  if (
-    typeof yAccessor !== 'function' ||
-    !Number.isFinite(domainMin) ||
-    !Number.isFinite(domainMax) ||
-    domainMax <= domainMin ||
-    !Number.isFinite(sampleCount) ||
-    sampleCount <= 0
-  ) {
-    return [];
-  }
-
-  const points = [];
-  for (let index = 0; index <= sampleCount; index += 1) {
-    const x = domainMin + ((domainMax - domainMin) * index) / sampleCount;
-    points.push({
-      x,
-      value: yAccessor(x),
-    });
-  }
-
-  return points;
-}
-
-function computeSampledBoundsInDomain(sampledPoints, domainMin, domainMax) {
-  if (!Array.isArray(sampledPoints) || sampledPoints.length === 0) {
-    return null;
-  }
-
-  let minValue = Number.POSITIVE_INFINITY;
-  let maxValue = Number.NEGATIVE_INFINITY;
-  for (const sampledPoint of sampledPoints) {
-    if (
-      !sampledPoint ||
-      !Number.isFinite(sampledPoint.x) ||
-      sampledPoint.x < domainMin ||
-      sampledPoint.x > domainMax
-    ) {
-      continue;
-    }
-
-    if (!Number.isFinite(sampledPoint.value)) {
-      continue;
-    }
-
-    if (sampledPoint.value < minValue) {
-      minValue = sampledPoint.value;
-    }
-    if (sampledPoint.value > maxValue) {
-      maxValue = sampledPoint.value;
-    }
-  }
-
-  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
-    return null;
-  }
-
-  return {
-    minValue,
-    maxValue,
-  };
-}
-
-function sampleArrayEvenly(values, maxCount) {
-  if (!Array.isArray(values) || values.length <= maxCount || maxCount <= 0) {
-    return values;
-  }
-
-  if (maxCount === 1) {
-    return [values[0]];
-  }
-
-  const sampled = [];
-  const lastIndex = values.length - 1;
-  const stride = lastIndex / (maxCount - 1);
-
-  for (let index = 0; index < maxCount; index += 1) {
-    sampled.push(values[Math.round(index * stride)]);
-  }
-
-  return sampled;
-}
-
-function median(values) {
-  if (!Array.isArray(values) || values.length === 0) {
-    return 0;
-  }
-
-  const sorted = [...values].sort((left, right) => left - right);
-  const middleIndex = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) {
-    return (sorted[middleIndex - 1] + sorted[middleIndex]) / 2;
-  }
-
-  return sorted[middleIndex];
-}
-
-function findLargestUnitJumpInRange(yAccessor, startIncome, endIncome) {
-  if (!Number.isFinite(startIncome) || !Number.isFinite(endIncome) || endIncome - startIncome < 1) {
-    return null;
-  }
-
-  let bestJump = null;
-  let previousIncome = startIncome;
-  let previousValue = yAccessor(startIncome);
-  while (previousIncome < endIncome) {
-    const currentIncome = previousIncome + 1;
-    const currentValue = yAccessor(currentIncome);
-
-    if (Number.isFinite(previousValue) && Number.isFinite(currentValue)) {
-      const delta = Math.abs(currentValue - previousValue);
-      if (!bestJump || delta > bestJump.delta) {
-        bestJump = {
-          boundaryIncome: currentIncome,
-          leftValue: previousValue,
-          rightValue: currentValue,
-          delta,
-        };
-      }
-    }
-
-    previousIncome = currentIncome;
-    previousValue = currentValue;
-  }
-
-  return bestJump;
-}
-
-function buildDiscontinuityRenderPlan(yAccessor, domainMin, domainMax) {
-  const safeDomainMin = Math.max(0, domainMin);
-  const safeDomainMax = domainMax;
-
-  if (
-    !Number.isFinite(safeDomainMin) ||
-    !Number.isFinite(safeDomainMax) ||
-    safeDomainMax <= safeDomainMin
-  ) {
-    return {
-      continuousDomains: [],
-      jumps: [],
-    };
-  }
-
-  const minIncome = Math.floor(safeDomainMin);
-  const maxIncome = Math.ceil(safeDomainMax);
-  const integerSpan = Math.max(0, maxIncome - minIncome);
-  const sampleStride = Math.max(
-    1,
-    Math.ceil(integerSpan / DISCONTINUITY_MAX_SAMPLE_INTERVALS)
-  );
-
-  const sampledPoints = [];
-  let sampledIncome = minIncome;
-  while (sampledIncome <= maxIncome) {
-    sampledPoints.push({
-      income: sampledIncome,
-      value: yAccessor(sampledIncome),
-    });
-    sampledIncome += sampleStride;
-  }
-  if (sampledPoints.length === 0 || sampledPoints[sampledPoints.length - 1].income !== maxIncome) {
-    sampledPoints.push({
-      income: maxIncome,
-      value: yAccessor(maxIncome),
-    });
-  }
-
-  let minSampleValue = Number.POSITIVE_INFINITY;
-  let maxSampleValue = Number.NEGATIVE_INFINITY;
-  const intervalDeltas = [];
-  const jumpIntervals = [];
-
-  for (let index = 0; index < sampledPoints.length; index += 1) {
-    const sampledValue = sampledPoints[index].value;
-    if (Number.isFinite(sampledValue)) {
-      if (sampledValue < minSampleValue) {
-        minSampleValue = sampledValue;
-      }
-      if (sampledValue > maxSampleValue) {
-        maxSampleValue = sampledValue;
-      }
-    }
-
-    if (index === 0) {
-      continue;
-    }
-
-    const leftSample = sampledPoints[index - 1];
-    const rightSample = sampledPoints[index];
-    if (!Number.isFinite(leftSample.value) || !Number.isFinite(rightSample.value)) {
-      continue;
-    }
-
-    const delta = Math.abs(rightSample.value - leftSample.value);
-    if (!Number.isFinite(delta)) {
-      continue;
-    }
-
-    intervalDeltas.push(delta);
-    if (delta <= 0) {
-      continue;
-    }
-    jumpIntervals.push({
-      leftIncome: leftSample.income,
-      rightIncome: rightSample.income,
-      leftValue: leftSample.value,
-      rightValue: rightSample.value,
-      delta,
-    });
-  }
-
-  if (jumpIntervals.length === 0) {
-    return {
-      continuousDomains: [[safeDomainMin, safeDomainMax]],
-      jumps: [],
-    };
-  }
-
-  const valueSpan =
-    Number.isFinite(minSampleValue) && Number.isFinite(maxSampleValue)
-      ? Math.max(0, maxSampleValue - minSampleValue)
-      : 0;
-  const baselineDeltas = sampleArrayEvenly(
-    intervalDeltas,
-    DISCONTINUITY_BASELINE_SAMPLE_SIZE
-  );
-  const medianDelta = median(baselineDeltas);
-  const jumpThreshold = Math.max(
-    DISCONTINUITY_ABSOLUTE_JUMP_FLOOR,
-    valueSpan * DISCONTINUITY_RELATIVE_JUMP_FLOOR,
-    medianDelta * DISCONTINUITY_JUMP_FACTOR
-  );
-
-  const rawJumps = [];
-  for (const jumpInterval of jumpIntervals) {
-    if (jumpInterval.delta <= jumpThreshold) {
-      continue;
-    }
-
-    let resolvedJump = null;
-    if (jumpInterval.rightIncome - jumpInterval.leftIncome <= 1) {
-      resolvedJump = {
-        boundaryIncome: jumpInterval.rightIncome,
-        leftValue: jumpInterval.leftValue,
-        rightValue: jumpInterval.rightValue,
-        delta: jumpInterval.delta,
-      };
-    } else {
-      resolvedJump = findLargestUnitJumpInRange(
-        yAccessor,
-        jumpInterval.leftIncome,
-        jumpInterval.rightIncome
-      );
-    }
-
-    if (!resolvedJump || resolvedJump.delta <= jumpThreshold) {
-      continue;
-    }
-
-    const jumpX = resolvedJump.boundaryIncome - 0.5;
-    if (jumpX <= safeDomainMin || jumpX >= safeDomainMax) {
-      continue;
-    }
-
-    const leftY = yAccessor(jumpX - DISCONTINUITY_DOMAIN_EPSILON);
-    const rightY = yAccessor(jumpX + DISCONTINUITY_DOMAIN_EPSILON);
-    if (!Number.isFinite(leftY) || !Number.isFinite(rightY)) {
-      continue;
-    }
-
-    const jumpHeight = Math.abs(rightY - leftY);
-    if (jumpHeight <= jumpThreshold) {
-      continue;
-    }
-
-    rawJumps.push({
-      x: jumpX,
-      y1: Math.min(leftY, rightY),
-      y2: Math.max(leftY, rightY),
-      jumpHeight,
-    });
-  }
-
-  rawJumps.sort((left, right) => left.x - right.x);
-  const dedupedJumps = [];
-  for (const candidateJump of rawJumps) {
-    const previousJump = dedupedJumps[dedupedJumps.length - 1];
-    if (!previousJump || Math.abs(candidateJump.x - previousJump.x) > 1e-6) {
-      dedupedJumps.push(candidateJump);
-      continue;
-    }
-
-    if (candidateJump.jumpHeight > previousJump.jumpHeight) {
-      dedupedJumps[dedupedJumps.length - 1] = candidateJump;
-    }
-  }
-
-  return {
-    continuousDomains: buildContinuousDomainsFromJumps(
-      safeDomainMin,
-      safeDomainMax,
-      dedupedJumps
-    ),
-    jumps: dedupedJumps.map(({ x, y1, y2 }) => ({ x, y1, y2 })),
-  };
-}
-
 function App() {
-  const initialHashState = useMemo(() => loadInitialStateFromHash(), []);
+  const initialHashState = useMemo(() => URL_PLOT_STATE.parse(), []);
   const [enabledCountries, setEnabledCountries] = useState(initialHashState.enabledCountries);
   const [enabledSchedules, setEnabledSchedules] = useState(initialHashState.enabledSchedules);
   const [rateType, setRateType] = useState(initialHashState.rateType);
@@ -1013,9 +293,7 @@ function App() {
   const [taxSpecificationInput, setTaxSpecificationInput] = useState(taxSpecification);
   const [runtimeInterpreter, setRuntimeInterpreter] = useState(() => TAX_INTERPRETER);
   const [taxSpecificationError, setTaxSpecificationError] = useState('');
-  const hasSyncedHashRef = useRef(false);
-  const yAxisAutoscaleCacheRef = useRef(new Map());
-  const discontinuityRenderCacheRef = useRef(new Map());
+  const plotPlanner = useMemo(() => createPlotPlanner(), []);
   const editorOptions = useMemo(
     () => ({
       automaticLayout: true,
@@ -1030,13 +308,9 @@ function App() {
   );
 
   const displayCurrencyToEur =
-    CURRENCY_TO_EUR_MAP.get(displayCurrency) ?? DEFAULT_DISPLAY_CURRENCY_TO_EUR;
+    CURRENCY_TO_EUR_RATES[displayCurrency] ?? DEFAULT_DISPLAY_CURRENCY_TO_EUR;
   const periodsPerYear = PAY_PERIODS_PER_YEAR[payPeriod] ?? PAY_PERIODS_PER_YEAR[DEFAULT_PAY_PERIOD];
-  const displayInputScale = getDisplayInputScale(
-    displayCurrency,
-    displayCurrencyToEur,
-    payPeriod
-  );
+  const displayInputScale = URL_PLOT_STATE.getInputScale(displayCurrency, payPeriod);
   const defaultMinKForDisplayCurrency =
     DEFAULT_MIN_EUR / (displayCurrencyToEur * periodsPerYear * displayInputScale);
   const defaultMaxKForDisplayCurrency =
@@ -1055,42 +329,29 @@ function App() {
       return;
     }
 
-    const nextCurrencyToEur =
-      CURRENCY_TO_EUR_MAP.get(nextDisplayCurrency) ?? DEFAULT_DISPLAY_CURRENCY_TO_EUR;
-    const currentCurrencyToEur = displayCurrencyToEur;
-    const nextDisplayInputScale = getDisplayInputScale(
-      nextDisplayCurrency,
-      nextCurrencyToEur,
-      payPeriod
-    );
-
     setMinKEurInput((current) =>
-      convertInputBetweenDisplayContexts(
+      URL_PLOT_STATE.convertInput(
         current,
         {
-          currencyToEur: currentCurrencyToEur,
-          periodsPerYear,
-          inputScale: displayInputScale,
+          displayCurrency,
+          payPeriod,
         },
         {
-          currencyToEur: nextCurrencyToEur,
-          periodsPerYear,
-          inputScale: nextDisplayInputScale,
+          displayCurrency: nextDisplayCurrency,
+          payPeriod,
         }
       )
     );
     setMaxKEurInput((current) =>
-      convertInputBetweenDisplayContexts(
+      URL_PLOT_STATE.convertInput(
         current,
         {
-          currencyToEur: currentCurrencyToEur,
-          periodsPerYear,
-          inputScale: displayInputScale,
+          displayCurrency,
+          payPeriod,
         },
         {
-          currencyToEur: nextCurrencyToEur,
-          periodsPerYear,
-          inputScale: nextDisplayInputScale,
+          displayCurrency: nextDisplayCurrency,
+          payPeriod,
         }
       )
     );
@@ -1102,41 +363,29 @@ function App() {
       return;
     }
 
-    const nextPeriodsPerYear =
-      PAY_PERIODS_PER_YEAR[nextPayPeriod] ?? PAY_PERIODS_PER_YEAR[DEFAULT_PAY_PERIOD];
-    const nextDisplayInputScale = getDisplayInputScale(
-      displayCurrency,
-      displayCurrencyToEur,
-      nextPayPeriod
-    );
-
     setMinKEurInput((current) =>
-      convertInputBetweenDisplayContexts(
+      URL_PLOT_STATE.convertInput(
         current,
         {
-          currencyToEur: displayCurrencyToEur,
-          periodsPerYear,
-          inputScale: displayInputScale,
+          displayCurrency,
+          payPeriod,
         },
         {
-          currencyToEur: displayCurrencyToEur,
-          periodsPerYear: nextPeriodsPerYear,
-          inputScale: nextDisplayInputScale,
+          displayCurrency,
+          payPeriod: nextPayPeriod,
         }
       )
     );
     setMaxKEurInput((current) =>
-      convertInputBetweenDisplayContexts(
+      URL_PLOT_STATE.convertInput(
         current,
         {
-          currencyToEur: displayCurrencyToEur,
-          periodsPerYear,
-          inputScale: displayInputScale,
+          displayCurrency,
+          payPeriod,
         },
         {
-          currencyToEur: displayCurrencyToEur,
-          periodsPerYear: nextPeriodsPerYear,
-          inputScale: nextDisplayInputScale,
+          displayCurrency,
+          payPeriod: nextPayPeriod,
         }
       )
     );
@@ -1193,25 +442,20 @@ function App() {
               preparedEvaluator = runtimeInterpreter.prepare(
                 countryLine.country,
                 activeScheduleKinds,
-                displayCurrency
+                displayCurrency,
+                periodsPerYear
               );
             } catch {
               preparedEvaluator = null;
             }
           }
 
-          const marginalRateByIncome = new Map();
-          const cumulativeTaxPaidByIncome = new Map();
-          const cumulativeRateByIncome = new Map();
-          const netPayByIncome = new Map();
-          const countryModel = runtimeInterpreter.modelByCountry.get(
-            String(countryLine.country).normalize('NFKC').trim().toLowerCase()
-          );
+          const runtimeCountry = runtimeInterpreter
+            .getCatalogue()
+            .countries.find(({ id }) => id === countryLine.country);
           const countryCurrencyToEur =
-            CURRENCY_TO_EUR_MAP.get(countryModel?.currencyKey ?? countryLine.currency) ?? 1;
-          const rawLineBreaks = Array.isArray(countryModel?.numericLiterals)
-            ? countryModel.numericLiterals
-            : [];
+            CURRENCY_TO_EUR_RATES[runtimeCountry?.currency ?? countryLine.currency] ?? 1;
+          const rawLineBreaks = runtimeCountry?.plotBreaks ?? [];
           const lineBreaksDisplayIncome = [...new Set(
             rawLineBreaks
               .map(
@@ -1222,20 +466,6 @@ function App() {
               .filter((breakValue) => Number.isFinite(breakValue) && breakValue >= 0)
               .map((breakValue) => Number(breakValue.toFixed(9)))
           )].sort((left, right) => left - right);
-
-          const getCachedValue = (cacheByIncome, displayIncome, evaluate) => {
-            if (cacheByIncome.has(displayIncome)) {
-              return cacheByIncome.get(displayIncome);
-            }
-
-            const value = evaluate(displayIncome);
-            const normalizedValue =
-              value === undefined || value === null || Number.isFinite(value)
-                ? value
-                : undefined;
-            cacheByIncome.set(displayIncome, normalizedValue);
-            return normalizedValue;
-          };
 
           const marginalRateAtDisplayIncome = (grossIncomeDisplayCurrency) => {
             const alignedIncomeDisplayCurrency =
@@ -1248,15 +478,7 @@ function App() {
               return undefined;
             }
 
-            return getCachedValue(
-              marginalRateByIncome,
-              alignedIncomeDisplayCurrency,
-              (displayIncome) => {
-                const grossIncomeAnnualDisplayCurrency = displayIncome * periodsPerYear;
-                const marginalRate = preparedEvaluator.marginalRate(grossIncomeAnnualDisplayCurrency);
-                return Number.isFinite(marginalRate) ? marginalRate * RATE_PERCENT_SCALE : 0;
-              }
-            );
+            return preparedEvaluator.marginalRate(alignedIncomeDisplayCurrency) * RATE_PERCENT_SCALE;
           };
 
           const cumulativeTaxPaidAtDisplayIncome = (grossIncomeDisplayCurrency) => {
@@ -1270,65 +492,35 @@ function App() {
               return undefined;
             }
 
-            return getCachedValue(
-              cumulativeTaxPaidByIncome,
-              alignedIncomeDisplayCurrency,
-              (displayIncome) => {
-                const grossIncomeAnnualDisplayCurrency = displayIncome * periodsPerYear;
-                const overallRate = preparedEvaluator.overallRate(grossIncomeAnnualDisplayCurrency);
-                if (!Number.isFinite(overallRate)) {
-                  return undefined;
-                }
-
-                return (overallRate * grossIncomeAnnualDisplayCurrency) / periodsPerYear;
-              }
-            );
+            return preparedEvaluator.taxPaid(alignedIncomeDisplayCurrency);
           };
 
           const netPayAtDisplayIncome = (grossIncomeDisplayCurrency) => {
             const alignedIncomeDisplayCurrency =
               alignDisplayIncomeToInteger(grossIncomeDisplayCurrency);
-            if (!Number.isFinite(alignedIncomeDisplayCurrency) || alignedIncomeDisplayCurrency < 0) {
+            if (
+              !Number.isFinite(alignedIncomeDisplayCurrency)
+              || alignedIncomeDisplayCurrency < 0
+              || !preparedEvaluator
+            ) {
               return undefined;
             }
 
-            return getCachedValue(
-              netPayByIncome,
-              alignedIncomeDisplayCurrency,
-              (displayIncome) => {
-                const taxPaid = cumulativeTaxPaidAtDisplayIncome(displayIncome);
-                if (!Number.isFinite(taxPaid)) {
-                  return undefined;
-                }
-
-                return displayIncome - taxPaid;
-              }
-            );
+            return preparedEvaluator.netPay(alignedIncomeDisplayCurrency);
           };
 
           const cumulativeRateAtDisplayIncome = (grossIncomeDisplayCurrency) => {
             const alignedIncomeDisplayCurrency =
               alignDisplayIncomeToInteger(grossIncomeDisplayCurrency);
-            if (!Number.isFinite(alignedIncomeDisplayCurrency) || alignedIncomeDisplayCurrency < 0) {
+            if (
+              !Number.isFinite(alignedIncomeDisplayCurrency)
+              || alignedIncomeDisplayCurrency < 0
+              || !preparedEvaluator
+            ) {
               return undefined;
             }
 
-            if (alignedIncomeDisplayCurrency === 0) {
-              return 0;
-            }
-
-            return getCachedValue(
-              cumulativeRateByIncome,
-              alignedIncomeDisplayCurrency,
-              (displayIncome) => {
-                const taxPaid = cumulativeTaxPaidAtDisplayIncome(displayIncome);
-                if (!Number.isFinite(taxPaid)) {
-                  return undefined;
-                }
-
-                return (taxPaid / displayIncome) * RATE_PERCENT_SCALE;
-              }
-            );
+            return preparedEvaluator.overallRate(alignedIncomeDisplayCurrency) * RATE_PERCENT_SCALE;
           };
 
           return {
@@ -1360,118 +552,28 @@ function App() {
   const hasPlottedLines = plottedCountryLines.length > 0;
 
   const xAxisLabel = useMemo(() => createCompactNumberLabelFormatter(), []);
+  const plotPlan = useMemo(
+    () =>
+      plotPlanner.plan({
+        rateType,
+        countryLines: plottedCountryLines,
+        domainMin: renderMinDisplayCurrency,
+        domainMax: renderMaxDisplayCurrency,
+      }),
+    [
+      plotPlanner,
+      plottedCountryLines,
+      rateType,
+      renderMinDisplayCurrency,
+      renderMaxDisplayCurrency,
+    ]
+  );
 
   const yAxisConfig = useMemo(() => {
     const isAbsoluteMode = rateType === 'tax-paid' || rateType === 'net-pay';
     const absoluteValueLabel = createCurrencyLabelFormatter(displayCurrency);
-    let maxValue = 0;
-    let minValue = 0;
-    const domainMin = renderMinDisplayCurrency;
-    const domainMax = renderMaxDisplayCurrency;
-
-    if (hasPlottedLines && Number.isFinite(domainMin) && Number.isFinite(domainMax) && domainMax > domainMin) {
-      const autoscaleSeriesDescriptors =
-        rateType === 'marginal-overall'
-          ? plottedCountryLines.flatMap((countryLine) => [
-              {
-                key: `${countryLine.country}-overall`,
-                yAccessor: countryLine.cumulativeRateAtDisplayIncome,
-              },
-              {
-                key: `${countryLine.country}-marginal`,
-                yAccessor: countryLine.marginalRateAtDisplayIncome,
-              },
-            ])
-          : plottedCountryLines.map((countryLine) => ({
-              key: countryLine.country,
-              yAccessor:
-                rateType === 'marginal'
-                  ? countryLine.marginalRateAtDisplayIncome
-                  : rateType === 'cumulative'
-                    ? countryLine.cumulativeRateAtDisplayIncome
-                    : rateType === 'tax-paid'
-                      ? countryLine.cumulativeTaxPaidAtDisplayIncome
-                      : countryLine.netPayAtDisplayIncome,
-            }));
-
-      const cache = yAxisAutoscaleCacheRef.current;
-      const activeSeriesKeys = new Set(
-        autoscaleSeriesDescriptors.map((seriesDescriptor) => seriesDescriptor.key)
-      );
-      for (const cachedKey of cache.keys()) {
-        if (!activeSeriesKeys.has(cachedKey)) {
-          cache.delete(cachedKey);
-        }
-      }
-
-      const domainSpan = Math.max(1, domainMax - domainMin);
-      const sampleSpacing = domainSpan / Y_AXIS_AUTOSCALE_SAMPLE_COUNT;
-      const domainLookahead = Math.max(1, domainSpan * Y_AXIS_AUTOSCALE_CACHE_LOOKAHEAD_FACTOR);
-      const prefetchDomainMin = domainMin - domainLookahead;
-      const prefetchDomainMax = domainMax + domainLookahead;
-
-      for (const seriesDescriptor of autoscaleSeriesDescriptors) {
-        const existingCacheEntry = cache.get(seriesDescriptor.key);
-        const isReusableCache =
-          Boolean(existingCacheEntry) &&
-          existingCacheEntry.yAccessor === seriesDescriptor.yAccessor &&
-          Number.isFinite(existingCacheEntry.scannedDomainMin) &&
-          Number.isFinite(existingCacheEntry.scannedDomainMax) &&
-          Array.isArray(existingCacheEntry.sampledPoints);
-
-        const expandedDomainMin = isReusableCache
-          ? Math.min(existingCacheEntry.scannedDomainMin, prefetchDomainMin)
-          : prefetchDomainMin;
-        const expandedDomainMax = isReusableCache
-          ? Math.max(existingCacheEntry.scannedDomainMax, prefetchDomainMax)
-          : prefetchDomainMax;
-        const needsRescan =
-          !isReusableCache ||
-          expandedDomainMin < existingCacheEntry.scannedDomainMin ||
-          expandedDomainMax > existingCacheEntry.scannedDomainMax;
-
-        let nextCacheEntry = existingCacheEntry;
-        if (needsRescan) {
-          const expandedSpan = Math.max(1, expandedDomainMax - expandedDomainMin);
-          const computedSampleCount = Math.ceil(
-            expandedSpan / Math.max(sampleSpacing, Number.EPSILON)
-          );
-          const sampleCount = Math.min(
-            Y_AXIS_AUTOSCALE_MAX_SAMPLES,
-            Math.max(Y_AXIS_AUTOSCALE_MIN_SAMPLES, computedSampleCount)
-          );
-
-          nextCacheEntry = {
-            yAccessor: seriesDescriptor.yAccessor,
-            scannedDomainMin: expandedDomainMin,
-            scannedDomainMax: expandedDomainMax,
-            sampledPoints: sampleSeriesPoints(
-              seriesDescriptor.yAccessor,
-              expandedDomainMin,
-              expandedDomainMax,
-              sampleCount
-            ),
-          };
-          cache.set(seriesDescriptor.key, nextCacheEntry);
-        }
-
-        const bounds = computeSampledBoundsInDomain(
-          nextCacheEntry.sampledPoints,
-          domainMin,
-          domainMax
-        );
-        if (!bounds) {
-          continue;
-        }
-
-        if (bounds.maxValue > maxValue) {
-          maxValue = bounds.maxValue;
-        }
-        if (bounds.minValue < minValue) {
-          minValue = bounds.minValue;
-        }
-      }
-    }
+    const maxValue = plotPlan.bounds?.maxValue ?? 0;
+    const minValue = plotPlan.bounds?.minValue ?? 0;
 
     const fallbackMax = isAbsoluteMode ? 1000 : RATE_PERCENT_SCALE;
     const safeMaxValue = maxValue > 0 ? maxValue : fallbackMax;
@@ -1502,157 +604,18 @@ function App() {
     };
   }, [
     rateType,
-    hasPlottedLines,
-    plottedCountryLines,
-    renderMinDisplayCurrency,
-    renderMaxDisplayCurrency,
     displayCurrency,
+    plotPlan.bounds,
   ]);
   const viewYMax = yAxisConfig.yMax;
   const viewYMin = yAxisConfig.yMin;
   const netPayReferenceStartX = Math.max(0, renderMinDisplayCurrency);
   const showNetPayReference =
     rateType === 'net-pay' && renderMaxDisplayCurrency > netPayReferenceStartX;
-  const discontinuityAwareSeries = useMemo(() => {
-    const domainMin = Math.max(0, renderMinDisplayCurrency);
-    const domainMax = renderMaxDisplayCurrency;
-    if (
-      !Number.isFinite(domainMin) ||
-      !Number.isFinite(domainMax) ||
-      domainMax <= domainMin
-    ) {
-      return [];
-    }
-
-    const seriesDescriptors =
-      rateType === 'marginal-overall'
-        ? plottedCountryLines.flatMap((countryLine) => [
-            {
-              key: `${countryLine.country}-overall`,
-              yAccessor: countryLine.cumulativeRateAtDisplayIncome,
-              forcedBreaks: countryLine.lineBreaksDisplayIncome,
-              color: countryLine.color,
-              isDashed: false,
-            },
-            {
-              key: `${countryLine.country}-marginal`,
-              yAccessor: countryLine.marginalRateAtDisplayIncome,
-              forcedBreaks: countryLine.lineBreaksDisplayIncome,
-              color: countryLine.color,
-              isDashed: true,
-            },
-          ])
-        : plottedCountryLines.map((countryLine) => ({
-            key: countryLine.country,
-            yAccessor:
-              rateType === 'marginal'
-                ? countryLine.marginalRateAtDisplayIncome
-                : rateType === 'cumulative'
-                  ? countryLine.cumulativeRateAtDisplayIncome
-                  : rateType === 'tax-paid'
-                    ? countryLine.cumulativeTaxPaidAtDisplayIncome
-                    : countryLine.netPayAtDisplayIncome,
-            forcedBreaks: countryLine.lineBreaksDisplayIncome,
-            color: countryLine.color,
-            isDashed: false,
-          }));
-
-    const activeSeriesKeys = new Set(seriesDescriptors.map((seriesDescriptor) => seriesDescriptor.key));
-    const cache = discontinuityRenderCacheRef.current;
-    for (const cachedKey of cache.keys()) {
-      if (!activeSeriesKeys.has(cachedKey)) {
-        cache.delete(cachedKey);
-      }
-    }
-
-    const domainSpan = Math.max(1, domainMax - domainMin);
-    const domainLookahead = Math.max(1, domainSpan * DISCONTINUITY_CACHE_LOOKAHEAD_FACTOR);
-    const prefetchDomainMin = Math.max(0, domainMin - domainLookahead);
-    const prefetchDomainMax = domainMax + domainLookahead;
-
-    return seriesDescriptors.map((seriesDescriptor) => ({
-      ...seriesDescriptor,
-      renderPlan: (() => {
-        const existingCacheEntry = cache.get(seriesDescriptor.key);
-        const isReusableCache =
-          Boolean(existingCacheEntry) &&
-          existingCacheEntry.yAccessor === seriesDescriptor.yAccessor &&
-          Number.isFinite(existingCacheEntry.scannedDomainMin) &&
-          Number.isFinite(existingCacheEntry.scannedDomainMax) &&
-          Array.isArray(existingCacheEntry.jumps);
-
-        const expandedDomainMin = isReusableCache
-          ? Math.min(existingCacheEntry.scannedDomainMin, prefetchDomainMin)
-          : prefetchDomainMin;
-        const expandedDomainMax = isReusableCache
-          ? Math.max(existingCacheEntry.scannedDomainMax, prefetchDomainMax)
-          : prefetchDomainMax;
-        const needsRescan =
-          !isReusableCache ||
-          expandedDomainMin < existingCacheEntry.scannedDomainMin ||
-          expandedDomainMax > existingCacheEntry.scannedDomainMax;
-
-        let nextCacheEntry = existingCacheEntry;
-        if (needsRescan) {
-          const cachedPlan = buildDiscontinuityRenderPlan(
-            seriesDescriptor.yAccessor,
-            expandedDomainMin,
-            expandedDomainMax
-          );
-          nextCacheEntry = {
-            yAccessor: seriesDescriptor.yAccessor,
-            scannedDomainMin: expandedDomainMin,
-            scannedDomainMax: expandedDomainMax,
-            jumps: cachedPlan.jumps,
-          };
-          cache.set(seriesDescriptor.key, nextCacheEntry);
-        }
-
-        const visibleJumps = nextCacheEntry.jumps.filter(
-          (jump) => jump.x > domainMin && jump.x < domainMax
-        );
-        return {
-          continuousDomains: buildContinuousDomainsFromJumpsAndBreaks(
-            domainMin,
-            domainMax,
-            visibleJumps,
-            seriesDescriptor.forcedBreaks
-          ),
-          jumps: visibleJumps,
-        };
-      })(),
-    }));
-  }, [
-    plottedCountryLines,
-    rateType,
-    renderMinDisplayCurrency,
-    renderMaxDisplayCurrency,
-  ]);
-  const enabledCountriesForHash = useMemo(
-    () => COUNTRY_KEYS.filter((country) => Boolean(enabledCountries[country])).join(','),
-    [enabledCountries]
-  );
-  const enabledSchedulesForHash = useMemo(
-    () =>
-      SCHEDULE_TYPES
-        .filter((scheduleType) => Boolean(enabledSchedules[scheduleType]))
-        .map((scheduleType) => SCHEDULE_TYPE_TO_HASH[scheduleType])
-        .join(','),
-    [enabledSchedules]
-  );
-  const rateTypeForHash = RATE_TYPE_TO_HASH[rateType] ?? RATE_TYPE_TO_HASH.marginal;
-  const displayCurrencyForHash = DISPLAY_CURRENCY_SET.has(displayCurrency)
-    ? displayCurrency
-    : DEFAULT_DISPLAY_CURRENCY;
-  const payPeriodForHash = PAY_PERIOD_SET.has(payPeriod) ? payPeriod : DEFAULT_PAY_PERIOD;
+  const discontinuityAwareSeries = plotPlan.series;
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return undefined;
-    }
-
-    const applyStateFromHash = () => {
-      const nextHashState = loadInitialStateFromHash();
+    return URL_PLOT_STATE.subscribe((nextHashState) => {
       setEnabledCountries(nextHashState.enabledCountries);
       setEnabledSchedules(nextHashState.enabledSchedules);
       setRateType(nextHashState.rateType);
@@ -1660,49 +623,25 @@ function App() {
       setPayPeriod(nextHashState.payPeriod);
       setMinKEurInput(nextHashState.minKEurInput);
       setMaxKEurInput(nextHashState.maxKEurInput);
-    };
-
-    const handleHashChange = () => {
-      applyStateFromHash();
-    };
-
-    window.addEventListener('hashchange', handleHashChange);
-    return () => {
-      window.removeEventListener('hashchange', handleHashChange);
-    };
+    });
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    const hashParams = new URLSearchParams();
-    hashParams.set('countries', enabledCountriesForHash);
-    hashParams.set('schedules', enabledSchedulesForHash);
-    hashParams.set('currency', displayCurrencyForHash);
-    hashParams.set('period', payPeriodForHash);
-    hashParams.set('x_range', `${minKEurForHash},${maxKEurForHash}`);
-    hashParams.set('type', rateTypeForHash);
-
-    const nextHash = hashParams.toString().replace(/%2C/gi, ',');
-    if (nextHash !== window.location.hash.slice(1)) {
-      if (!hasSyncedHashRef.current) {
-        const nextUrl = `${window.location.pathname}${window.location.search}#${nextHash}`;
-        window.history.replaceState(null, '', nextUrl);
-        hasSyncedHashRef.current = true;
-      } else {
-        window.location.hash = nextHash;
-      }
-    } else {
-      hasSyncedHashRef.current = true;
-    }
+    URL_PLOT_STATE.sync({
+      enabledCountries,
+      enabledSchedules,
+      rateType,
+      displayCurrency,
+      payPeriod,
+      minKEurInput: String(minKEurForHash),
+      maxKEurInput: String(maxKEurForHash),
+    });
   }, [
-    enabledCountriesForHash,
-    enabledSchedulesForHash,
-    rateTypeForHash,
-    displayCurrencyForHash,
-    payPeriodForHash,
+    enabledCountries,
+    enabledSchedules,
+    rateType,
+    displayCurrency,
+    payPeriod,
     minKEurForHash,
     maxKEurForHash,
   ]);
@@ -1955,26 +894,26 @@ function App() {
             />
           )}
           {discontinuityAwareSeries.flatMap((series) => [
-            ...series.renderPlan.continuousDomains.map((domain, domainIndex) => (
+            ...series.continuousDomains.map((domain, domainIndex) => (
               <Plot.OfX
                 key={`${series.key}-segment-${domainIndex}`}
                 y={series.yAccessor}
                 domain={domain}
-                color={series.color}
+                color={series.style.color}
                 weight={2}
                 minSamplingDepth={7}
                 maxSamplingDepth={14}
-                svgPathProps={series.isDashed ? { strokeDasharray: '6 6' } : undefined}
+                svgPathProps={series.style.dashed ? { strokeDasharray: '6 6' } : undefined}
               />
             )),
-            ...series.renderPlan.jumps.map((jump, jumpIndex) => (
+            ...series.jumps.map((jump, jumpIndex) => (
               <Line.Segment
                 key={`${series.key}-jump-${jumpIndex}`}
                 point1={[jump.x, jump.y1]}
                 point2={[jump.x, jump.y2]}
-                color={series.color}
+                color={series.style.color}
                 weight={2}
-                style={series.isDashed ? 'dashed' : 'solid'}
+                style={series.style.dashed ? 'dashed' : 'solid'}
               />
             )),
           ])}

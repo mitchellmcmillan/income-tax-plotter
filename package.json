@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "benchmark:plot-planning": "node scripts/benchmark-plot-planning.js",
+    "benchmark:tax-outcomes": "node scripts/benchmark-tax-outcomes.js",
+    "benchmark:url-plot-state": "node scripts/benchmark-url-plot-state.js",
     "test": "node --test ./tests/*.test.js",
     "preview": "vite preview",
     "generate:taxspec-parser": "./scripts/generate-taxspec-parser.sh",
