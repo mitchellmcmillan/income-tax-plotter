@@ -109,36 +109,6 @@
   font-size: 0.85rem;
 }
 
-.schedules-panel {
-  border: 1px solid #cbd5e1;
-  border-radius: 0.75rem;
-  background: #ffffff;
-  padding: 0.9rem;
-  display: grid;
-  gap: 0.75rem;
-}
-
-.schedule-grid {
-  display: grid;
-  gap: 0.75rem;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-}
-
-.country-schedules {
-  border: 1px solid #cbd5e1;
-  border-radius: 0.6rem;
-  padding: 0.6rem;
-  display: grid;
-  gap: 0.45rem;
-}
-
-.country-schedules legend {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: #334155;
-  padding: 0 0.2rem;
-}
-
 .toggle-row {
   display: flex;
   align-items: center;

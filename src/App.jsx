@@ -482,25 +482,6 @@ function App() {
       </header>
 
       <section className="controls-panel">
-        {/* <div className="control-card">
-          <h2>Countries</h2>
-          {COUNTRY_LINES.map((countryLine) => (
-            <label key={countryLine.country} className="toggle-row">
-              <input
-                type="checkbox"
-                checked={Boolean(enabledCountries[countryLine.country])}
-                onChange={() =>
-                  setEnabledCountries((previous) => ({
-                    ...previous,
-                    [countryLine.country]: !previous[countryLine.country],
-                  }))
-                }
-              />
-              {countryLine.countryLabel}
-            </label>
-          ))}
-        </div> */}
-
         <div className="control-card">
           <h2>Schedules</h2>
           {plotScheduleTypes.map((scheduleType) => (
@@ -586,7 +567,7 @@ function App() {
               </select>
             </label>
             <label className="select-row">
-              Income frequency
+              Pay period
               <select value={payPeriod} onChange={handlePayPeriodChange}>
                 {PAY_PERIOD_OPTIONS.map((payPeriodOption) => (
                   <option key={payPeriodOption.id} value={payPeriodOption.id}>
@@ -633,9 +614,7 @@ function App() {
           </div>
           {!hasValidXRange && (
             <p className="validation-error">
-              {xInputUsesThousands
-                ? `Enter a valid x range in thousand ${displayCurrency} ${payPeriodLabel.toLowerCase()} where max is greater than min.`
-                : `Enter a valid x range in ${displayCurrency} ${payPeriodLabel.toLowerCase()} where max is greater than min.`}
+              Maximum must be greater than minimum.
             </p>
           )}
         </div>
@@ -758,7 +737,7 @@ function App() {
 
       <section className="taxspec-workbench">
         <div className="taxspec-doc-panel">
-          <h2>Tax Specification Documentation</h2>
+          <h2>Tax specification guide</h2>
           <div className="taxspec-doc-content">
             <div className="taxspec-doc-section">
               <h3>1. File Structure</h3>
@@ -795,7 +774,7 @@ HelperValue : _ = { ... };`}</code></pre>
             </div>
 
             <div className="taxspec-doc-section">
-              <h3>4. Wrapper Semantics</h3>
+              <h3>4. Component bodies</h3>
               <p>
                 Component bodies are always wrapped in braces. The expression inside braces is the
                 total amount function; marginal rates are derived from that.
@@ -832,13 +811,13 @@ HelperValue : _ = { ... };`}</code></pre>
               <ul className="taxspec-doc-bullets">
                 <li>
                   <code>brackets(selector; [a..b]: rate; ...)</code>: computes total banded tax by
-                  integrating the per-band rate expression over each bracket. Example:
+                  integrating the per-band rate expression over each bracket:
                   <code>{`brackets(x; [0..20000]: 0.1; [20000..inf]: 0.2;)`}</code>
                 </li>
                 <li>
                   <code>bracketsTaxable(income, allowanceExpr, allowanceBase; ...)</code>:
                   computes bracket tax after reducing taxable income by an allowance expression,
-                  capped by <code>allowanceBase</code>. Example:
+                  capped by <code>allowanceBase</code>:
                   <code>{`bracketsTaxable(x, PA, 12570; [0..12570]: 0; [12570..inf]: 0.2;)`}</code>
                 </li>
               </ul>
@@ -860,17 +839,17 @@ HelperValue : _ = { ... };`}</code></pre>
               <ul className="taxspec-doc-bullets">
                 <li>
                   <code>T(ref)</code>: total value of another component at the current income.
-                  Example:
+                  <br />
                   <code>{`0.09 * T(IncomeTax)`}</code>
                 </li>
                 <li>
                   <code>eval(ref, income)</code>: evaluate a component at an explicit income.
-                  Example:
+                  <br />
                   <code>{`eval(IncomeTax, x - 5000)`}</code>
                 </li>
                 <li>
                   <code>fix(init, updateExpr)</code>: fixed-point iteration with state variable
-                  <code>k</code>, used for circular dependencies. Example:
+                  <code>k</code>, used for circular dependencies:
                   <code>{`fix(0, 0.09 * eval(IncomeTax, pos(x - k)))`}</code>
                 </li>
               </ul>
@@ -884,21 +863,21 @@ HelperValue : _ = { ... };`}</code></pre>
             </div>
 
             <div className="taxspec-doc-section">
-              <h3>8. Built-In Functions (All With Examples)</h3>
+              <h3>8. Built-in functions</h3>
               <ul className="taxspec-doc-bullets">
-                <li><code>min(...values)</code>: smallest value. Example: <code>{`min(0.19, 0.2, 0.4)`}</code></li>
-                <li><code>max(...values)</code>: largest value. Example: <code>{`max(0, x - 12570)`}</code></li>
-                <li><code>abs(x)</code>: absolute value. Example: <code>{`abs(x - 50000)`}</code></li>
-                <li><code>pow(a, b)</code>: exponentiation. Example: <code>{`pow(x, 2)`}</code></li>
-                <li><code>sqrt(x)</code>: square root. Example: <code>{`sqrt(max(0, x - 10000))`}</code></li>
-                <li><code>log(x)</code>: natural log. Example: <code>{`log(max(1, x))`}</code></li>
-                <li><code>exp(x)</code>: natural exponential. Example: <code>{`exp(0.01)`}</code></li>
-                <li><code>floor(x, increment)</code>: floor to increment (default 1). Example: <code>{`floor(x, 100)`}</code></li>
-                <li><code>ceil(x, increment)</code>: ceil to increment (default 1). Example: <code>{`ceil(x, 100)`}</code></li>
-                <li><code>round(x, increment)</code>: round to increment (default 1). Example: <code>{`round(x, 100)`}</code></li>
-                <li><code>sum(...values)</code>: numeric sum. Example: <code>{`sum(T(IncomeTax), T(SocialSecurity))`}</code></li>
-                <li><code>if(cond, whenTrue, whenFalse)</code>: conditional expression. Example: <code>{`if(x > 50000, 0.02 * x, 0)`}</code></li>
-                <li><code>pos(x)</code>: positive part, equivalent to <code>max(0, x)</code>. Example: <code>{`pos(x - 12570)`}</code></li>
+                <li><code>min(...values)</code>: smallest value; <code>{`min(0.19, 0.2, 0.4)`}</code></li>
+                <li><code>max(...values)</code>: largest value; <code>{`max(0, x - 12570)`}</code></li>
+                <li><code>abs(x)</code>: absolute value; <code>{`abs(x - 50000)`}</code></li>
+                <li><code>pow(a, b)</code>: exponentiation; <code>{`pow(x, 2)`}</code></li>
+                <li><code>sqrt(x)</code>: square root; <code>{`sqrt(max(0, x - 10000))`}</code></li>
+                <li><code>log(x)</code>: natural log; <code>{`log(max(1, x))`}</code></li>
+                <li><code>exp(x)</code>: natural exponential; <code>{`exp(0.01)`}</code></li>
+                <li><code>floor(x, increment)</code>: floor to increment (default 1); <code>{`floor(x, 100)`}</code></li>
+                <li><code>ceil(x, increment)</code>: ceil to increment (default 1); <code>{`ceil(x, 100)`}</code></li>
+                <li><code>round(x, increment)</code>: round to increment (default 1); <code>{`round(x, 100)`}</code></li>
+                <li><code>sum(...values)</code>: numeric sum; <code>{`sum(T(IncomeTax), T(SocialSecurity))`}</code></li>
+                <li><code>if(cond, whenTrue, whenFalse)</code>: conditional expression; <code>{`if(x > 50000, 0.02 * x, 0)`}</code></li>
+                <li><code>pos(x)</code>: positive part, equivalent to <code>max(0, x)</code>; <code>{`pos(x - 12570)`}</code></li>
               </ul>
               <pre className="taxspec-doc-code"><code>{`Helper : _ = {
   floor(x, 100) + max(0, min(5000, x - 20000))
@@ -929,8 +908,7 @@ HelperValue : _ = { ... };`}</code></pre>
       <footer className="disclaimer-panel" aria-label="Disclaimer">
         <h2>Disclaimer</h2>
         <p>
-          All tax rates displayed are approximations and may be completely inaccurate,
-          and should not be used for anything at all.
+          Tax results are approximate and for illustration only. They are not tax advice.
         </p>
       </footer>
     </main>

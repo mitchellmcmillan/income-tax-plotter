@@ -1,7 +1,7 @@
 # Income tax plotter
 
-This repository contains an implementation of an income tax specification parser (using ANTLR) and evaluator, and a web viewer.
+An interactive chart for comparing modeled income tax rates across countries, using an editable tax specification.
 
-All tax rates displayed are approximations and may be completely inaccurate, and should not be used for anything at all.
+Tax results are approximate and for illustration only. They are not tax advice.
 
-AI was used extensively to generate code.
+AI tools assisted with development.
