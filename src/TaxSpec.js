@@ -9,7 +9,8 @@ import {
   normalizeEnabledScheduleToken,
   normalizeIdentifier,
 } from './taxspec/shared.js';
-import { analyzePlotBreaks, lowerTaxSpec } from './taxspec/lowerTaxSpec.js';
+import { analyzePlotBreaks } from './taxspec/analyzePlotBreaks.js';
+import { lowerTaxSpec } from './taxspec/lowerTaxSpec.js';
 import { installCodegenMethods } from './taxspec/codegenMethods.js';
 
 const INTERNALS = new WeakMap();
