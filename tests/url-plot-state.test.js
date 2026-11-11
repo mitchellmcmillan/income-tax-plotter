@@ -85,6 +85,42 @@ test('display-context range conversion preserves annual EUR income', () => {
   );
 });
 
+test('display-context range conversion converts both endpoints independently', () => {
+  assert.deepEqual(
+    urlPlotState.convertRange('120', '60', {
+      displayCurrency: 'EUR',
+      payPeriod: 'annual',
+    }, {
+      displayCurrency: 'GBP',
+      payPeriod: 'monthly',
+    }),
+    { min: '8333.333333', max: '4166.666667' }
+  );
+});
+
+test('range conversion preserves an unparseable endpoint and endpoint order', () => {
+  assert.deepEqual(
+    urlPlotState.convertRange('invalid', '60', {
+      displayCurrency: 'EUR',
+      payPeriod: 'annual',
+    }, {
+      displayCurrency: 'GBP',
+      payPeriod: 'monthly',
+    }),
+    { min: 'invalid', max: '4166.666667' }
+  );
+  assert.deepEqual(
+    urlPlotState.convertRange('60', '30', {
+      displayCurrency: 'EUR',
+      payPeriod: 'annual',
+    }, {
+      displayCurrency: 'EUR',
+      payPeriod: 'annual',
+    }),
+    { min: '60', max: '30' }
+  );
+});
+
 test('missing range converts defaults into the selected display context', () => {
   const state = urlPlotState.parse('#currency=GBP&period=monthly');
 

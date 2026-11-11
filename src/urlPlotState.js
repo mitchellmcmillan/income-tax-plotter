@@ -60,6 +60,13 @@ export function createUrlPlotState({
     return String(Number(converted.toFixed(6)));
   }
 
+  function convertRange(min, max, from, to) {
+    return {
+      min: convertInput(min, from, to),
+      max: convertInput(max, from, to),
+    };
+  }
+
   function serialize(state) {
     const params = new URLSearchParams();
     params.set(
@@ -112,13 +119,19 @@ export function createUrlPlotState({
       payPeriod: defaults.payPeriod,
     };
     const selectedContext = { displayCurrency, payPeriod };
+    const convertedDefaults = convertRange(
+      defaults.minKEurInput,
+      defaults.maxKEurInput,
+      defaultContext,
+      selectedContext
+    );
     const [rawMin, rawMax] = (params.get('x_range') ?? '').split(',', 2);
     const minKEurInput = Number.isFinite(Number(rawMin))
       ? String(Math.max(0, Number(rawMin)))
-      : convertInput(defaults.minKEurInput, defaultContext, selectedContext);
+      : convertedDefaults.min;
     const maxKEurInput = Number.isFinite(Number(rawMax))
       ? String(Math.max(0, Number(rawMax)))
-      : convertInput(defaults.maxKEurInput, defaultContext, selectedContext);
+      : convertedDefaults.max;
     const encodedRate = identifier(params.get('type') ?? '');
 
     return {
@@ -151,5 +164,5 @@ export function createUrlPlotState({
     return () => window.removeEventListener('hashchange', handleHashChange);
   }
 
-  return { convertInput, getInputScale, parse, serialize, subscribe, sync };
+  return { convertInput, convertRange, getInputScale, parse, serialize, subscribe, sync };
 }

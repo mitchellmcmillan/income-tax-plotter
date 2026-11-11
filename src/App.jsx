@@ -285,32 +285,14 @@ function App() {
       return;
     }
 
-    setMinKEurInput((current) =>
-      URL_PLOT_STATE.convertInput(
-        current,
-        {
-          displayCurrency,
-          payPeriod,
-        },
-        {
-          displayCurrency: nextDisplayCurrency,
-          payPeriod,
-        }
-      )
+    const convertedRange = URL_PLOT_STATE.convertRange(
+      minKEurInput,
+      maxKEurInput,
+      { displayCurrency, payPeriod },
+      { displayCurrency: nextDisplayCurrency, payPeriod }
     );
-    setMaxKEurInput((current) =>
-      URL_PLOT_STATE.convertInput(
-        current,
-        {
-          displayCurrency,
-          payPeriod,
-        },
-        {
-          displayCurrency: nextDisplayCurrency,
-          payPeriod,
-        }
-      )
-    );
+    setMinKEurInput(convertedRange.min);
+    setMaxKEurInput(convertedRange.max);
     setDisplayCurrency(nextDisplayCurrency);
   };
   const handlePayPeriodChange = (event) => {
@@ -319,32 +301,14 @@ function App() {
       return;
     }
 
-    setMinKEurInput((current) =>
-      URL_PLOT_STATE.convertInput(
-        current,
-        {
-          displayCurrency,
-          payPeriod,
-        },
-        {
-          displayCurrency,
-          payPeriod: nextPayPeriod,
-        }
-      )
+    const convertedRange = URL_PLOT_STATE.convertRange(
+      minKEurInput,
+      maxKEurInput,
+      { displayCurrency, payPeriod },
+      { displayCurrency, payPeriod: nextPayPeriod }
     );
-    setMaxKEurInput((current) =>
-      URL_PLOT_STATE.convertInput(
-        current,
-        {
-          displayCurrency,
-          payPeriod,
-        },
-        {
-          displayCurrency,
-          payPeriod: nextPayPeriod,
-        }
-      )
-    );
+    setMinKEurInput(convertedRange.min);
+    setMaxKEurInput(convertedRange.max);
     setPayPeriod(nextPayPeriod);
   };
 
